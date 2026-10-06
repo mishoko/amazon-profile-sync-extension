@@ -4,33 +4,116 @@
   <meta charset="utf-8">
   <title>Waybill</title>
   <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
 </head>
 <body>
   <header class="header">
     <img class="logo" src="../icons/icon.svg" alt="" width="28" height="28">
     <span class="wordmark">Waybill</span>
+    <span class="account" data-account-email hidden></span>
   </header>
 
-  <main class="signed-out">
-    <div class="tile" aria-hidden="true">
-      <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="12" width="22" height="14" rx="3"/>
-        <path d="M8 12V8a6 6 0 0 1 12 0v4"/>
-      </svg>
-    </div>
-    <h1 class="title">Log in to Waybill</h1>
-    <p class="subtitle">Connect the extension to your account.</p>
-    <a class="button" href="../pages/web-app-pending.html#log-in" target="_blank" aria-describedby="login-note">
-      Log in
-      <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9.5 1.8h4.7v4.7M14.2 1.8 7.5 8.5M12.2 9.5v3.5a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2V5a1.2 1.2 0 0 1 1.2-1.2h3.5"/>
-      </svg>
-    </a>
-    <p class="note" id="login-note">Opens the Waybill web app in a new tab</p>
-  </main>
+  <div data-view="signed-out">
+    <main class="signed-out">
+      <div class="tile" aria-hidden="true">
+        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="12" width="22" height="14" rx="3"/>
+          <path d="M8 12V8a6 6 0 0 1 12 0v4"/>
+        </svg>
+      </div>
+      <h1 class="title">Log in to Waybill</h1>
+      <p class="subtitle">Connect the extension to your account.</p>
+      <a class="button" href="../pages/web-app-pending.html#log-in" target="_blank" aria-describedby="login-note">
+        Log in
+        <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9.5 1.8h4.7v4.7M14.2 1.8 7.5 8.5M12.2 9.5v3.5a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2V5a1.2 1.2 0 0 1 1.2-1.2h3.5"/>
+        </svg>
+      </a>
+      <p class="note" id="login-note">Opens the Waybill web app in a new tab</p>
+    </main>
 
-  <footer class="footer">
-    Don't have an account? <a class="link" href="../pages/web-app-pending.html#sign-up" target="_blank">Sign up now</a>
-  </footer>
+    <footer class="footer">
+      Don't have an account? <a class="link" href="../pages/web-app-pending.html#sign-up" target="_blank">Sign up now</a>
+    </footer>
+  </div>
+
+  <div data-view="signed-in" hidden>
+    <main class="marketplaces" aria-label="Marketplaces">
+      <section class="card" aria-labelledby="amazon-name">
+        <div class="card-head">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="amazon-name"></button>
+          <span class="mark mark-amazon" aria-hidden="true">a</span>
+          <span class="card-title">
+            <span class="card-name" id="amazon-name">Amazon</span>
+            <span class="card-sub">Tracking checker</span>
+          </span>
+          <button class="chevron" type="button" aria-expanded="false" aria-controls="amazon-details" aria-label="Amazon details"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
+        </div>
+        <dl class="card-details" id="amazon-details" hidden>
+          <div class="row">
+            <dt><label for="amazon-marketplace">Marketplace</label></dt>
+            <dd>
+              <select class="select" id="amazon-marketplace">
+                <option>.com</option>
+                <option>.ca</option>
+                <option>.co.uk</option>
+                <option>.com.au</option>
+                <option>.de</option>
+                <option>.es</option>
+                <option>.fr</option>
+                <option>.ie</option>
+                <option>.it</option>
+                <option>.ae</option>
+                <option>.sa</option>
+              </select>
+            </dd>
+          </div>
+          <div class="row">
+            <dt>Account</dt>
+            <dd><a class="button-danger" href="../pages/marketplace-pending.html#amazon" target="_blank">Log in</a></dd>
+          </div>
+          <div class="row">
+            <dt>Connection</dt>
+            <dd><span class="pill-danger">Inactive</span></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="card" aria-labelledby="aliexpress-name">
+        <div class="card-head">
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="aliexpress-name"></button>
+          <span class="mark mark-aliexpress" aria-hidden="true">A</span>
+          <span class="card-title">
+            <span class="card-name" id="aliexpress-name">AliExpress</span>
+            <span class="card-sub">Tracking checker</span>
+          </span>
+          <button class="chevron" type="button" aria-expanded="false" aria-disabled="true" aria-label="AliExpress details (not available yet)"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
+        </div>
+      </section>
+    </main>
+
+    <div class="actions">
+      <a class="button button-compact" href="../pages/web-app-pending.html#account" target="_blank">
+        Go to Waybill account
+        <svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9.5 1.8h4.7v4.7M14.2 1.8 7.5 8.5M12.2 9.5v3.5a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2V5a1.2 1.2 0 0 1 1.2-1.2h3.5"/>
+        </svg>
+      </a>
+      <div class="actions-row">
+        <button class="button-secondary" type="button" aria-disabled="true" title="Not available in this build">
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1.5 8h3l2-5.5 3 11 2-5.5h3"/>
+          </svg>
+          Activity
+        </button>
+        <button class="button-secondary" type="button" data-log-out>
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6M10.5 11 13.5 8l-3-3M13.5 8H6"/>
+          </svg>
+          Log out
+        </button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
