@@ -1,0 +1,119 @@
+:root {
+  --blue: #0065fc;
+  --ink: #1c1c28;
+  --ink-logo: #3d4756;
+  --ink-muted: #7a7e94;
+  --ink-faint: #a8adc4;
+  --ink-footer: #4a4d63;
+  --line: #e5e9f0;
+  --surface-sunken: #f7f8fb;
+  --tile: #f4f8ff;
+  --tile-line: #e1ecff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 420px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 49px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.logo { display: block; border-radius: 7px; }
+
+.wordmark {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink-logo);
+}
+
+.signed-out {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 26px 27px;
+  text-align: center;
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 15px;
+  border: 1px solid var(--tile-line);
+  border-radius: 16px;
+  background: var(--tile);
+  color: var(--blue);
+}
+
+.title {
+  margin: 0 0 5px;
+  font-size: 18.5px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 20px;
+  color: var(--ink-muted);
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  align-self: stretch;
+  height: 44px;
+  margin-top: 22px;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.note {
+  margin: 11px 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-faint);
+}
+
+.footer {
+  line-height: 44px;
+  text-align: center;
+  border-top: 1px solid var(--line);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  color: var(--ink-footer);
+}
+
+.link {
+  color: var(--blue);
+  font-weight: 600;
+  text-decoration: none;
+}
