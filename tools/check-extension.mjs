@@ -26,12 +26,13 @@ for (const [size, rel] of Object.entries(icons)) {
 }
 
 // Every local reference in extension pages must resolve; nothing may load from the network.
-const pages = [manifest.action.default_popup, ...readdirSync(join(root, 'pages')).map((f) => `pages/${f}`)];
+const pages = [manifest.action.default_popup, ...['pages', 'dev'].flatMap((dir) =>
+  readdirSync(join(root, dir)).filter((f) => f.endsWith('.html')).map((f) => `${dir}/${f}`))];
 for (const rel of pages) {
   const file = join(root, rel);
   if (!existsSync(file)) { fail(`missing ${rel}`); continue; }
   const text = readFileSync(file, 'utf8');
-  for (const [, ref] of text.matchAll(/(?:href|src)="([^"#]+)/g)) {
+  for (const [, ref] of text.matchAll(/(?:href|src)="([^"#?]+)/g)) {
     if (/^[a-z]+:/i.test(ref)) fail(`${rel} references remote URL ${ref}`);
     else if (!existsSync(join(dirname(file), ref))) fail(`${rel} references missing ${ref}`);
   }
@@ -45,7 +46,7 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => {
   return statSync(p).isDirectory() ? walk(p) : [p];
 });
 for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !f.includes('/tools/') && !f.includes('/.git/'))) {
-  if (/https?:\/\//.test(readFileSync(file, 'utf8').replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, ''))) {
+  if (/https?:\/\//.test(readFileSync(file, 'utf8').replace(/xmlns=['"]http:\/\/www\.w3\.org\/2000\/svg['"]/g, ''))) {
     fail(`${file.slice(root.length + 1)} contains a URL`);
   }
 }
