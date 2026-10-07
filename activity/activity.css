@@ -113,6 +113,10 @@ select:focus-visible {
 .period { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--ink-footer); }
 .period select { height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 
+.source { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -8px 0 16px; font-size: 12px; color: var(--ink-muted); }
+.source a { color: inherit; }
+.refresh { margin-left: auto; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink-footer); font: inherit; cursor: pointer; }
+
 .message { margin: 40px 0; font-size: 14px; color: var(--ink-muted); text-align: center; }
 .message a { font-weight: 600; }
 

@@ -8,6 +8,11 @@ import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-
 
 const accountKey = ({ marketplace, domain }) => `${marketplace}${domain}`;
 
+// Development builds only: activity.html?showOrdersWindow keeps the Amazon
+// window visible and open, to inspect its requests in DevTools.
+const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
+const orderReadOptions = { visible: isDevelopmentBuild && new URLSearchParams(location.search).has('showOrdersWindow') };
+
 const initialState = {
   accounts: { status: 'loading', items: [] },
   selectedKey: null,
@@ -39,7 +44,7 @@ function reducer(state, action) {
       const { result } = action;
       const next = result.status === 'needs-sign-in'
         ? { ...current, status: 'needs-sign-in', orders: [] }
-        : { ...current, status: 'loaded', filter: result.filter, filters: result.filters.length ? result.filters : current.filters, orders: result.orders };
+        : { ...current, status: 'loaded', filter: result.filter, filters: result.filters.length ? result.filters : current.filters, orders: result.orders, source: result.source };
       return { ...state, orders: { ...state.orders, [action.key]: next } };
     }
     case 'orders-failed': {
@@ -60,7 +65,9 @@ async function loadOrders(key, filter = null) {
   const requestId = nextRequestId++;
   store.dispatch({ type: 'orders-requested', key, requestId, filter });
   try {
-    const result = filter ? await readOrders(account.domain, filter) : await readLatestOrders(account.domain);
+    const result = filter
+      ? await readOrders(account.domain, filter, orderReadOptions)
+      : await readLatestOrders(account.domain, orderReadOptions);
     if (result.status === 'needs-sign-in') await storeAccount(account.marketplace, account.domain, { ...account, status: 'needs-sign-in' });
     store.dispatch({ type: 'orders-received', key, requestId, result });
   } catch (error) {
@@ -83,7 +90,7 @@ function h(tag, props = {}, ...children) {
     else if (name === 'on') for (const [type, handler] of Object.entries(value)) node.addEventListener(type, handler);
     else node.setAttribute(name, value === true ? '' : value);
   }
-  node.append(...children.flat().filter(Boolean));
+  node.append(...children.flat(Infinity).filter(Boolean));
   return node;
 }
 
@@ -121,6 +128,19 @@ function renderOrder(order, domain) {
       h('a', { href: item.url, target: '_blank', rel: 'noreferrer', text: item.title })))));
 }
 
+const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+// Where the shown orders came from: the Amazon page(s) read, when, and how long it took.
+function renderSource(entry, key) {
+  const { pages, readAt, durationMs } = entry.source;
+  const shown = (url) => { const { host, pathname, search } = new URL(url); return `${host.replace(/^www\./, '')}${pathname}${search}`; };
+  return h('p', { class: 'source' },
+    `Read live from Amazon at ${timeFormat.format(readAt)} in ${(durationMs / 1000).toFixed(1)} s: `,
+    pages.map((url, index) => [index ? ', ' : '', h('a', { href: url, target: '_blank', rel: 'noreferrer', text: shown(url) })]),
+    ' ',
+    h('button', { class: 'refresh', type: 'button', on: { click: () => loadOrders(key, entry.filter) }, text: 'Refresh' }));
+}
+
 function renderDetail({ accounts, selectedKey, orders }) {
   const detail = document.querySelector('[data-detail]');
   const account = accounts.items.find((item) => accountKey(item) === selectedKey);
@@ -149,6 +169,7 @@ function renderDetail({ accounts, selectedKey, orders }) {
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
         h('p', { class: 'detail-sub', text: account.email ?? account.name ?? '' })),
       period),
+    entry?.status === 'loaded' && entry.source && renderSource(entry, selectedKey),
     body);
 }
 
