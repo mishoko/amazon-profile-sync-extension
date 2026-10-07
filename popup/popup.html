@@ -40,7 +40,7 @@
 
   <div data-view="signed-in" hidden>
     <main class="marketplaces" aria-label="Marketplaces">
-      <section class="card" aria-labelledby="amazon-name">
+      <section class="card" aria-labelledby="amazon-name" data-marketplace="amazon">
         <div class="card-head">
           <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="amazon-name"></button>
           <img class="mark" src="../icons/marketplaces/amazon.svg" alt="" width="32" height="32">
@@ -71,16 +71,19 @@
           </div>
           <div class="row">
             <dt>Account</dt>
-            <dd><a class="button-danger" target="_blank" rel="noreferrer" data-amazon-log-in>Log in</a></dd>
+            <dd>
+              <a class="button-danger" target="_blank" rel="noreferrer" data-amazon-log-in>Log in</a>
+              <span class="identity" data-amazon-identity hidden></span>
+            </dd>
           </div>
-          <div class="row">
+          <div class="row" data-amazon-connection-row>
             <dt>Connection</dt>
-            <dd><span class="pill-danger">Inactive</span></dd>
+            <dd><span class="pill" data-amazon-connection data-status="unknown">Inactive</span></dd>
           </div>
         </dl>
       </section>
 
-      <section class="card" aria-labelledby="aliexpress-name">
+      <section class="card" aria-labelledby="aliexpress-name" data-marketplace="aliexpress">
         <div class="card-head">
           <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="aliexpress-name"></button>
           <img class="mark" src="../icons/marketplaces/aliexpress.png" alt="" width="32" height="32">

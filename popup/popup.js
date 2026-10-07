@@ -1,3 +1,5 @@
+import { mountMarketplaces } from './marketplaces.js';
+
 // There is no account service yet, so a real session never exists and store
 // builds always show the signed-out view. Unpacked development builds simulate
 // sign-in with a local fixture: "Log in" waits briefly and then shows the
@@ -42,11 +44,17 @@ function showView(name) {
   }
 }
 
+let marketplacesMounted = false;
+
 function renderSignedIn(session) {
   const email = document.querySelector('[data-account-email]');
   email.textContent = session.email;
   email.hidden = false;
   showView('signed-in');
+  if (!marketplacesMounted) {
+    marketplacesMounted = true;
+    mountMarketplaces(document.querySelector('[data-view="signed-in"]'));
+  }
 }
 
 function renderSignedOut() {
@@ -54,44 +62,7 @@ function renderSignedOut() {
   showView('signed-out');
 }
 
-function setExpanded(chevron, expanded) {
-  chevron.setAttribute('aria-expanded', String(expanded));
-  document.getElementById(chevron.getAttribute('aria-controls')).hidden = !expanded;
-}
-
-// A marketplace's details can only be opened while its switch is on.
-// AliExpress has no details: its expanded view was never observed.
-function setMarketplaceOn(toggle, on) {
-  toggle.setAttribute('aria-checked', String(on));
-  const chevron = toggle.closest('.card').querySelector('.chevron');
-  if (!chevron.hasAttribute('aria-controls')) return;
-  if (!on) setExpanded(chevron, false);
-  chevron.setAttribute('aria-disabled', String(!on));
-}
-
-// Opens the selected marketplace's orders page. When the user isn't signed in
-// (or the session is old), Amazon redirects it to its own sign-in page in the
-// marketplace's language and returns there afterwards. Nothing is read back.
-function updateAmazonLogIn() {
-  const domain = document.querySelector('#amazon-marketplace').value;
-  document.querySelector('[data-amazon-log-in]').href =
-    `https://www.amazon${domain}/your-orders/orders?orderFilter=last30`;
-}
-
-// Local UI state only: nothing here connects, enables, or saves anything.
 document.addEventListener('click', (event) => {
-  const toggle = event.target.closest('.switch');
-  if (toggle) {
-    setMarketplaceOn(toggle, toggle.getAttribute('aria-checked') !== 'true');
-    return;
-  }
-
-  const chevron = event.target.closest('.chevron:not([aria-disabled="true"])');
-  if (chevron) {
-    setExpanded(chevron, chevron.getAttribute('aria-expanded') !== 'true');
-    return;
-  }
-
   const logIn = event.target.closest('[data-log-in]');
   if (logIn && isDevelopmentBuild) {
     event.preventDefault();
@@ -104,9 +75,6 @@ document.addEventListener('click', (event) => {
     renderSignedOut();
   }
 });
-
-document.querySelector('#amazon-marketplace').addEventListener('change', updateAmazonLogIn);
-updateAmazonLogIn();
 
 if (isDevelopmentBuild) {
   document.querySelector('#login-note').textContent = 'Development build: simulated sign-in, no account is used';

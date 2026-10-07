@@ -9,8 +9,13 @@ const fail = (msg) => failures.push(msg);
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 if (manifest.manifest_version !== 3) fail('manifest_version must be 3');
 for (const key of ['name', 'version', 'action']) if (!manifest[key]) fail(`missing ${key}`);
-for (const key of ['permissions', 'optional_permissions', 'optional_host_permissions', 'background', 'content_scripts']) {
+for (const key of ['optional_permissions', 'optional_host_permissions', 'background', 'content_scripts']) {
   if (key in manifest) fail(`unexpected ${key}: not needed yet`);
+}
+// storage: marketplace settings and this profile's Amazon account summaries.
+const allowedPermissions = ['storage'];
+for (const permission of manifest.permissions ?? []) {
+  if (!allowedPermissions.includes(permission)) fail(`unexpected permission ${permission}`);
 }
 // Amazon marketplace origins only: the popup reads each marketplace's session.
 const amazonOrigin = /^https:\/\/www\.amazon\.[a-z.]+\/\*$/;
@@ -50,8 +55,9 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
   return statSync(p).isDirectory() ? walk(p) : [p];
 });
-// The Amazon marketplace origin template, covered by host_permissions.
-const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g];
+// The Amazon marketplace origin template (covered by host_permissions) and the
+// OpenID identifiers Amazon's sign-in URL carries as parameters (never fetched).
+const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g, /http:\/\/specs\.openid\.net\/auth\/2\.0(?:\/identifier_select)?/g];
 for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !f.includes('/tools/') && !f.includes('/.git/'))) {
   const text = navigationTargets.reduce((t, target) => t.replace(target, ''), readFileSync(file, 'utf8'));
   if (/https?:\/\//.test(text.replace(/xmlns=['"]http:\/\/www\.w3\.org\/2000\/svg['"]/g, ''))) {
@@ -63,4 +69,4 @@ if (failures.length) {
   console.error(failures.map((f) => `✗ ${f}`).join('\n'));
   process.exit(1);
 }
-console.log(`✓ ${manifest.name} ${manifest.version}: manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, no permissions, ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
+console.log(`✓ ${manifest.name} ${manifest.version}: manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, permissions [${manifest.permissions ?? []}], ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
