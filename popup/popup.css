@@ -359,7 +359,6 @@ select:focus-visible {
   font: inherit;
   font-size: 13px;
   font-weight: 500;
+  text-decoration: none;
   cursor: pointer;
 }
-
-.button-secondary[aria-disabled="true"] { cursor: default; }

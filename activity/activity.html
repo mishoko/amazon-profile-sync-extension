@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waybill · Activity</title>
+  <link rel="stylesheet" href="activity.css">
+  <script type="module" src="activity.js"></script>
+</head>
+<body>
+  <header class="header">
+    <img class="logo" src="../icons/icon.svg" alt="" width="28" height="28">
+    <span class="wordmark">Waybill</span>
+    <span class="section">Activity</span>
+  </header>
+
+  <div class="layout">
+    <nav class="accounts" aria-labelledby="accounts-title">
+      <h1 class="accounts-title" id="accounts-title">Accounts in this browser</h1>
+      <ul class="account-list" data-account-list></ul>
+      <p class="hint" data-accounts-empty hidden>
+        No Amazon accounts found yet. Open Waybill, switch Amazon on and pick
+        the marketplace you're signed into.
+      </p>
+    </nav>
+
+    <main class="detail" data-detail aria-live="polite"></main>
+  </div>
+</body>
+</html>
