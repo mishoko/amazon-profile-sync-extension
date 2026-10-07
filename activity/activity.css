@@ -123,6 +123,7 @@ select:focus-visible {
 .message a { font-weight: 600; }
 
 .orders { display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; list-style: none; }
+.orders.is-refreshing { opacity: 0.55; }
 
 .order { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 

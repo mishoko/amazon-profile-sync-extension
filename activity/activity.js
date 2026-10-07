@@ -186,6 +186,13 @@ function renderSource(entry, key, instanceId) {
     h('button', { class: 'refresh', type: 'button', on: { click: () => loadOrders(key, entry.filter) }, text: 'Refresh' }));
 }
 
+// Shown in place of the source line while a read is in progress.
+function renderFetching(account, instanceId) {
+  const own = account.profiles.map((profile) => profile.instanceId === instanceId);
+  const where = own.every(Boolean) ? ' in this browser profile' : own.some(Boolean) ? '' : ' in another browser profile';
+  return h('p', { class: 'source', role: 'status', text: `Fetching live from Amazon${where}…` });
+}
+
 function renderDetail({ instanceId, accounts, selectedKey, orders }) {
   const detail = document.querySelector('[data-detail]');
   const account = accounts.items.find((item) => item.key === selectedKey);
@@ -201,21 +208,28 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
     }, entry.filters.map(({ value, label }) => h('option', { value, selected: value === entry.filter, text: label }))));
 
   const signInLink = h('a', { href: ordersUrl(account.domain), target: '_blank', rel: 'noreferrer', text: `Sign in on Amazon ${account.domain}` });
-  const body = !entry || entry.status === 'loading' ? h('p', { class: 'message', text: 'Loading orders from Amazon…' })
+  const loading = !entry || entry.status === 'loading';
+  const orderList = (className) => h('ul', { class: className }, entry.orders.map((order) => renderOrder(order, account.domain)));
+  const body = loading && entry?.orders.length ? orderList('orders is-refreshing')
+    : loading ? h('p', { class: 'message', text: 'Loading orders from Amazon…' })
     : entry.status === 'needs-sign-in' ? h('p', { class: 'message' }, 'Amazon wants your password again. ', signInLink, ', then select the account again.')
     : entry.status === 'error' ? h('p', { class: 'message', text: `Couldn't load orders: ${entry.error}` })
     : entry.orders.length === 0 ? h('p', { class: 'message', text: 'No orders in this period.' })
-    : h('ul', { class: 'orders' }, entry.orders.map((order) => renderOrder(order, account.domain)));
+    : orderList('orders');
 
-  detail.replaceChildren(
+  const status = loading ? renderFetching(account, instanceId)
+    : entry.status === 'loaded' && entry.source ? renderSource(entry, selectedKey, instanceId)
+    : null;
+
+  detail.replaceChildren(...[
     h('div', { class: 'detail-head' },
       h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 40, height: 40 }),
       h('div', {},
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
         h('p', { class: 'detail-sub', text: account.email ?? account.name ?? '' })),
       period),
-    entry?.status === 'loaded' && entry.source && renderSource(entry, selectedKey, instanceId),
-    body);
+    status,
+    body].filter(Boolean));
 }
 
 addEventListener('pagehide', closeOrdersWindows);
