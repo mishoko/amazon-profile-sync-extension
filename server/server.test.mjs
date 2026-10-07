@@ -20,8 +20,8 @@ after(() => server.close());
 
 const api = (path, init = {}) => fetch(`http://${base}${path}`, { ...init, headers: { origin: ORIGIN, 'content-type': 'application/json', ...init.headers } });
 
-function connect(instanceId, { origin = ORIGIN } = {}) {
-  const socket = new WebSocket(`ws://${base}/connect?instance=${instanceId}`, { headers: { origin } });
+function connect(instanceId, { origin = ORIGIN, path = `/connect?instance=${instanceId}` } = {}) {
+  const socket = new WebSocket(`ws://${base}${path}`, { headers: { origin } });
   const messages = [];
   const waiters = [];
   socket.addEventListener('message', ({ data }) => {
@@ -133,4 +133,28 @@ test('fails pending requests when the profile disconnects', async () => {
   await a.next();
   a.close();
   assert.equal((await response).status, 502);
+});
+
+test('pushes the account list to watchers whenever it changes', async () => {
+  const watcher = connect(null, { path: '/watch' });
+  await watcher.opened;
+  assert.equal((await watcher.next()).type, 'accounts');
+
+  const a = connect(PROFILE_A);
+  await a.opened;
+  await watcher.next(); // profile connected
+  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
+  const added = await watcher.next();
+  assert.ok(added.accounts.some((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD' && account.profiles[0].online));
+
+  a.send({ type: 'accounts', accounts: [] }); // signed out
+  const removed = await watcher.next();
+  assert.ok(!removed.accounts.some((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD'));
+
+  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
+  await watcher.next();
+  a.close();
+  const offline = await watcher.next();
+  assert.equal(offline.accounts.find((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD').profiles[0].online, false);
+  watcher.close();
 });

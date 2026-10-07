@@ -4,6 +4,9 @@
 //
 // - Each profile connects over a WebSocket (/connect) and registers only
 //   account summaries: marketplace, customer ID, name, email, status.
+// - Open Activity pages subscribe over a WebSocket (/watch) and receive the
+//   full account list again whenever any profile's accounts or connection
+//   change.
 // - Orders are lazy: POST /accounts/<key>/orders forwards a read request to a
 //   connected profile that holds the account, and returns its answer. Orders
 //   are passed through and never stored.
@@ -49,6 +52,8 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
   const instances = new Map();
   // requestId -> { instanceId, resolve, timer }
   const pendingOrders = new Map();
+  // Activity pages watching the account list.
+  const watchers = new Set();
   let allowedHosts = new Set();
 
   function instance(id) {
@@ -67,6 +72,11 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
       }
     }
     return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  function broadcastAccounts() {
+    const message = { type: 'accounts', accounts: aggregatedAccounts() };
+    for (const watcher of watchers) watcher.send(message);
   }
 
   function requestOrders(key, filter) {
@@ -97,10 +107,12 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     const entry = instance(instanceId);
     entry.connection?.close();
     entry.connection = connection;
+    broadcastAccounts();
     return {
       onMessage(message) {
         if (message?.type === 'accounts' && Array.isArray(message.accounts)) {
           entry.accounts = new Map(message.accounts.map(accountSummary).filter(Boolean).map((account) => [accountKey(account), account]));
+          broadcastAccounts();
         } else if (message?.type === 'orders-result') {
           settleOrders(instanceId, message);
         }
@@ -108,6 +120,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
       onClose() {
         if (entry.connection !== connection) return;
         entry.connection = null;
+        broadcastAccounts();
         for (const [requestId, pending] of pendingOrders) {
           if (pending.instanceId === instanceId) settleOrders(instanceId, { requestId, error: 'The browser profile disconnected.' });
         }
@@ -168,10 +181,17 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     return respond(response, 404, { error: 'Not found' }, origin);
   });
 
+  function handleWatcher(connection) {
+    watchers.add(connection);
+    connection.send({ type: 'accounts', accounts: aggregatedAccounts() });
+    return { onMessage() {}, onClose: () => watchers.delete(connection) };
+  }
+
   server.on('upgrade', (request, socket) => {
     const { pathname, searchParams } = new URL(request.url, 'http://localhost');
     const instanceId = searchParams.get('instance') ?? '';
-    if (!isAllowed(request) || pathname !== '/connect' || !INSTANCE_ID.test(instanceId)
+    const route = pathname === '/watch' ? 'watch' : pathname === '/connect' && INSTANCE_ID.test(instanceId) ? 'connect' : null;
+    if (!isAllowed(request) || !route
       || request.headers.upgrade?.toLowerCase() !== 'websocket' || !request.headers['sec-websocket-key']) {
       socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
@@ -181,7 +201,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
       onMessage: (message) => handlers.onMessage(message),
       onClose: () => handlers.onClose(),
     });
-    handlers = handleConnection(instanceId, connection);
+    handlers = route === 'watch' ? handleWatcher(connection) : handleConnection(instanceId, connection);
   });
 
   return {
@@ -194,6 +214,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     },
     close() {
       for (const { connection } of instances.values()) connection?.close();
+      for (const watcher of watchers) watcher.close();
       return new Promise((resolve) => server.close(resolve));
     },
   };
