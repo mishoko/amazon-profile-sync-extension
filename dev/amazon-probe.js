@@ -4,6 +4,7 @@
 // findings, and keeps nothing. It never handles a password or a cookie value.
 //
 // Runs on load for ?check=.co.uk:2024,.com:2023, or from the form.
+// ?layout=.co.uk:2024 saves a text-free layout report of that orders page.
 const form = document.querySelector('[data-probe]');
 const output = document.querySelector('[data-result]');
 
@@ -19,7 +20,8 @@ const maskEmail = (email) => {
 const customerKeyPattern = /["']?([A-Za-z_]*[Cc]ustomer[A-Za-z_]*)["']?\s*[:=]\s*["']([A-Za-z0-9.\-]{8,80})["']/g;
 const accountUrnPattern = /amzn1\.account\.[A-Z0-9]{10,}/g;
 const emailPattern = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
-const orderIdPattern = /\b(?:\d{3}|D01)-\d{7}-\d{7}\b/g;
+const orderIdPattern = /(?<![\d-])(?:\d{3}|D01)-\d{7}-\d{7}(?![\d-])/g;
+const isOrderId = (text) => new RegExp(orderIdPattern.source).test(text);
 
 // A short, one-way fingerprint so values can be compared across marketplaces
 // and profiles without showing them.
@@ -98,5 +100,66 @@ form.addEventListener('submit', (event) => {
   run([[data.get('domain'), data.get('year')]]);
 });
 
-const requested = new URLSearchParams(location.search).get('check');
-if (requested) run(requested.split(',').map((pair) => pair.split(':')));
+// Layout report: the orders page's element structure with every text replaced
+// by its length and links reduced to their path shape, so selectors can be
+// written without reading personal data. Saved as a download and shown here.
+const describeElement = (element) => [
+  element.tagName.toLowerCase(),
+  element.id && `#${element.id}`,
+  ...[...element.classList].map((name) => `.${name}`),
+  element.getAttribute('name') && `[name=${element.getAttribute('name')}]`,
+  element.getAttribute('data-component') && `[data-component=${element.getAttribute('data-component')}]`,
+  element.tagName === 'A' && `[href=${(element.getAttribute('href') ?? '').split('?')[0].replace(/\/(dp|gp\/product)\/[A-Z0-9]+/, '/$1/<asin>').replace(/\d{3}-\d{7}-\d{7}/g, '<order-id>').slice(0, 60)}]`,
+].filter(Boolean).join('');
+
+function outline(element, depth = 0, lines = []) {
+  if (lines.length > 400 || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'svg'].includes(element.tagName)) return lines;
+  const text = [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE)
+    .map((node) => node.textContent.trim()).filter(Boolean).join(' ');
+  const shape = !text ? '' : isOrderId(text) ? ' "<order-id>"' : ` "<${text.length} chars>"`;
+  lines.push(`${'  '.repeat(depth)}${describeElement(element)}${shape}`);
+  for (const child of element.children) outline(child, depth + 1, lines);
+  return lines;
+}
+
+async function layoutReport(domain, year) {
+  const response = await fetch(`https://www.amazon${domain}/your-orders/orders?timeFilter=year-${year}`, { credentials: 'include' });
+  const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+  const orderIdElements = [...doc.querySelectorAll('body *')]
+    .filter((element) => [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && isOrderId(node.textContent)));
+  const ancestry = (element) => {
+    const chain = [];
+    for (let node = element; node && node !== doc.body; node = node.parentElement) chain.unshift(describeElement(node));
+    return chain.join(' > ');
+  };
+  // The largest ancestor of the first order ID that holds only one order ID.
+  let container = orderIdElements[0] ?? null;
+  while (container?.parentElement && container.parentElement !== doc.body
+    && new Set(container.parentElement.textContent.match(orderIdPattern)).size <= 1) {
+    container = container.parentElement;
+  }
+  return [
+    `domain ${domain}, year ${year}, status ${response.status}, final path ${new URL(response.url).pathname}`,
+    '', '== selects',
+    ...[...doc.querySelectorAll('select')].map((select) => `${describeElement(select)}: ${[...select.options].map((o) => o.value).join(', ')}`),
+    '', '== order ID elements (ancestry)',
+    ...orderIdElements.map(ancestry),
+    '', '== first order container',
+    ...(container ? outline(container) : ['(none)']),
+  ].join('\n');
+}
+
+async function runLayout(domain, year) {
+  output.textContent = 'Reading the orders page layout…';
+  const report = await layoutReport(domain, year);
+  output.textContent = report;
+  const link = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([report], { type: 'text/plain' })),
+    download: `waybill-amazon-layout${domain}-${year}.txt`,
+  });
+  link.click();
+}
+
+const params = new URLSearchParams(location.search);
+if (params.get('check')) run(params.get('check').split(',').map((pair) => pair.split(':')));
+if (params.get('layout')) runLayout(...params.get('layout').split(':'));
