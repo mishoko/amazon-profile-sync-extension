@@ -69,6 +69,15 @@ function setMarketplaceOn(toggle, on) {
   chevron.setAttribute('aria-disabled', String(!on));
 }
 
+// Opens the selected marketplace's orders page. When the user isn't signed in
+// (or the session is old), Amazon redirects it to its own sign-in page in the
+// marketplace's language and returns there afterwards. Nothing is read back.
+function updateAmazonLogIn() {
+  const domain = document.querySelector('#amazon-marketplace').value;
+  document.querySelector('[data-amazon-log-in]').href =
+    `https://www.amazon${domain}/your-orders/orders?orderFilter=last30`;
+}
+
 // Local UI state only: nothing here connects, enables, or saves anything.
 document.addEventListener('click', (event) => {
   const toggle = event.target.closest('.switch');
@@ -95,6 +104,9 @@ document.addEventListener('click', (event) => {
     renderSignedOut();
   }
 });
+
+document.querySelector('#amazon-marketplace').addEventListener('change', updateAmazonLogIn);
+updateAmazonLogIn();
 
 if (isDevelopmentBuild) {
   document.querySelector('#login-note').textContent = 'Development build: simulated sign-in, no account is used';
