@@ -149,6 +149,26 @@ test('fails pending requests when the profile disconnects', async () => {
   assert.equal((await response).status, 502);
 });
 
+test('removes an account: hidden from the list, orders refused, watchers told', async () => {
+  const a = connect(PROFILE_A);
+  await a.opened;
+  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.es', customerId: 'A1EEEEEEEEEEEE', status: 'active', signedInAt: Date.now() - 1000 }] });
+  await settle();
+  const id = await idOf('.es', 'A1EEEEEEEEEEEE');
+  const watcher = connect(null, { path: '/watch' });
+  await watcher.opened;
+  await watcher.next();
+
+  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE' })).status, 204);
+  assert.ok(!(await watcher.next()).accounts.some((account) => account.id === id));
+  assert.ok(!(await accounts()).some((account) => account.id === id));
+  assert.equal((await ordersOf(id)).status, 404);
+  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE' })).status, 404);
+  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE', headers: { origin: 'https://evil.example' } })).status, 403);
+  a.close();
+  watcher.close();
+});
+
 test('pushes the account list to watchers whenever it changes', async () => {
   const watcher = connect(null, { path: '/watch' });
   await watcher.opened;

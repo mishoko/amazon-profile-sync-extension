@@ -63,6 +63,24 @@ for (const [name, create] of stores) {
       assert.deepEqual((await store.listAccounts()).map((account) => account.domain).sort(), ['.co.uk', '.com']);
     });
 
+    test('a deleted account stays hidden until a later sign-in is reported', async () => {
+      await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA', signedInAt: Date.now() - 60_000 })]);
+      const [account] = await store.listAccounts();
+      assert.equal(await store.deleteAccount(account.id), true);
+      assert.equal(await store.deleteAccount(account.id), false);
+      assert.deepEqual(await store.listAccounts(), []);
+      assert.equal(await store.getAccount(account.id), null);
+
+      // Still signed in, reported again with the old sign-in: stays removed.
+      await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA', signedInAt: Date.now() - 60_000 })]);
+      assert.deepEqual(await store.listAccounts(), []);
+
+      // A new sign-in after the removal brings it back, with the same ID.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA', signedInAt: Date.now() })]);
+      assert.deepEqual((await store.listAccounts()).map((restored) => restored.id), [account.id]);
+    });
+
     test('replacing a profile list drops accounts it no longer holds, and the ID survives', async () => {
       await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA' })]);
       const [first] = await store.listAccounts();

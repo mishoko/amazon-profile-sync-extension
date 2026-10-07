@@ -49,8 +49,10 @@ async function upsertAccount(client, summary) {
   if (existing) {
     await client.query(
       `UPDATE accounts SET customer_id = COALESCE(customer_id, $2), name = COALESCE($3, name),
-         email = COALESCE($4, email), updated_at = now() WHERE id = $1`,
-      [existing.id, summary.customerId, summary.name, summary.email],
+         email = COALESCE($4, email), updated_at = now(),
+         deleted_at = CASE WHEN to_timestamp($5::double precision / 1000) > deleted_at THEN NULL ELSE deleted_at END
+       WHERE id = $1`,
+      [existing.id, summary.customerId, summary.name, summary.email, summary.signedInAt ?? null],
     );
     return existing.id;
   }
@@ -95,16 +97,20 @@ export async function createPostgresStore(connectionString) {
     async listAccounts() {
       const { rows } = await pool.query(
         `SELECT ${ACCOUNT_COLUMNS}, ${HOLDERS} FROM accounts a
-         WHERE EXISTS (SELECT 1 FROM profile_accounts pa WHERE pa.account_id = a.id) ORDER BY a.id`,
+         WHERE a.deleted_at IS NULL AND EXISTS (SELECT 1 FROM profile_accounts pa WHERE pa.account_id = a.id) ORDER BY a.id`,
       );
       return rows.map(toAccount);
     },
     async getAccount(id) {
       const { rows } = await pool.query(
-        `SELECT ${ACCOUNT_COLUMNS}, ${HOLDERS} FROM accounts a WHERE a.id = $1`,
+        `SELECT ${ACCOUNT_COLUMNS}, ${HOLDERS} FROM accounts a WHERE a.id = $1 AND a.deleted_at IS NULL`,
         [id],
       );
       return rows[0] ? toAccount(rows[0]) : null;
+    },
+    async deleteAccount(id) {
+      const { rowCount } = await pool.query('UPDATE accounts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL', [id]);
+      return rowCount === 1;
     },
     close: () => pool.end(),
   };

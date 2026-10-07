@@ -7,6 +7,8 @@
 // - Open Activity pages subscribe over a WebSocket (/watch) and receive the
 //   full account list again whenever any profile's accounts or connection
 //   change.
+// - DELETE /accounts/<id> removes an account (soft delete); it returns only
+//   when a profile reports a sign-in to it made after the removal.
 // - Orders are lazy: POST /accounts/<id>/orders forwards a read request to a
 //   connected profile that holds the account, and returns its answer. Orders
 //   are passed through and never stored.
@@ -41,6 +43,8 @@ function accountSummary(raw) {
     name: text(raw?.name),
     email: text(raw?.email),
     status: STATUSES.has(raw?.status) ? raw.status : null,
+    // When this profile last saw the user sign in to the account (ms).
+    signedInAt: Number.isFinite(raw?.signedInAt) && raw.signedInAt <= Date.now() + 60_000 ? raw.signedInAt : null,
   };
   const valid = account.marketplace === 'amazon' && /^\.[a-z.]+$/.test(account.domain ?? '')
     && account.status && (account.customerId || account.email);
@@ -166,7 +170,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
     if (request.method === 'OPTIONS') {
       response.writeHead(204, {
         'access-control-allow-origin': origin,
-        'access-control-allow-methods': 'GET, POST',
+        'access-control-allow-methods': 'GET, POST, DELETE',
         'access-control-allow-headers': 'content-type',
         'access-control-allow-private-network': 'true',
         vary: 'Origin',
@@ -176,6 +180,12 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
     if (request.method === 'GET' && pathname === '/health') return respond(response, 204, undefined, origin);
     if (request.method === 'GET' && pathname === '/accounts') {
       return respond(response, 200, { accounts: await aggregatedAccounts() }, origin);
+    }
+    const accountMatch = pathname.match(/^\/accounts\/(\d{1,15})$/);
+    if (request.method === 'DELETE' && accountMatch) {
+      if (!(await store.deleteAccount(Number(accountMatch[1])))) return respond(response, 404, { error: 'No such account.' }, origin);
+      await broadcastAccounts();
+      return respond(response, 204, undefined, origin);
     }
     const ordersMatch = pathname.match(/^\/accounts\/(\d{1,15})\/orders$/);
     if (request.method === 'POST' && ordersMatch) {
