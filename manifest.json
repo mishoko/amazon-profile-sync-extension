@@ -3,6 +3,19 @@
   "name": "Waybill",
   "version": "0.1.0",
   "description": "Track your marketplace purchases and order statuses.",
+  "host_permissions": [
+    "https://www.amazon.com/*",
+    "https://www.amazon.ca/*",
+    "https://www.amazon.co.uk/*",
+    "https://www.amazon.com.au/*",
+    "https://www.amazon.de/*",
+    "https://www.amazon.es/*",
+    "https://www.amazon.fr/*",
+    "https://www.amazon.ie/*",
+    "https://www.amazon.it/*",
+    "https://www.amazon.ae/*",
+    "https://www.amazon.sa/*"
+  ],
   "action": {
     "default_title": "Waybill",
     "default_popup": "popup/popup.html",

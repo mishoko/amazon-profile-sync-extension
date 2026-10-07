@@ -9,8 +9,13 @@ const fail = (msg) => failures.push(msg);
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 if (manifest.manifest_version !== 3) fail('manifest_version must be 3');
 for (const key of ['name', 'version', 'action']) if (!manifest[key]) fail(`missing ${key}`);
-for (const key of ['permissions', 'host_permissions', 'optional_permissions', 'background', 'content_scripts']) {
-  if (key in manifest) fail(`unexpected ${key}: this milestone needs none`);
+for (const key of ['permissions', 'optional_permissions', 'optional_host_permissions', 'background', 'content_scripts']) {
+  if (key in manifest) fail(`unexpected ${key}: not needed yet`);
+}
+// Amazon marketplace origins only: the popup reads each marketplace's session.
+const amazonOrigin = /^https:\/\/www\.amazon\.[a-z.]+\/\*$/;
+for (const origin of manifest.host_permissions ?? []) {
+  if (!amazonOrigin.test(origin)) fail(`unexpected host permission ${origin}`);
 }
 
 const pngSize = (file) => {
@@ -45,8 +50,8 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
   return statSync(p).isDirectory() ? walk(p) : [p];
 });
-// Links the user opens in a new tab. They are navigations, never fetched by the extension.
-const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}\/your-orders\/orders\?orderFilter=last30/g];
+// The Amazon marketplace origin template, covered by host_permissions.
+const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g];
 for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !f.includes('/tools/') && !f.includes('/.git/'))) {
   const text = navigationTargets.reduce((t, target) => t.replace(target, ''), readFileSync(file, 'utf8'));
   if (/https?:\/\//.test(text.replace(/xmlns=['"]http:\/\/www\.w3\.org\/2000\/svg['"]/g, ''))) {
@@ -58,4 +63,4 @@ if (failures.length) {
   console.error(failures.map((f) => `✗ ${f}`).join('\n'));
   process.exit(1);
 }
-console.log(`✓ ${manifest.name} ${manifest.version}: manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, no permissions, no remote URLs except ${navigationTargets.length} allowed link target`);
+console.log(`✓ ${manifest.name} ${manifest.version}: manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, no permissions, ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
