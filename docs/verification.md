@@ -107,3 +107,29 @@ and button edges match to the pixel; the chevron is within 1px.
 4. Click "Log in": "Logging in…" for about 2.5s, then the signed-in view. Close and reopen the popup: still signed in until "Log out".
 5. Switch Amazon on, open its details, pick a marketplace and click "Log in": a new tab opens on that Amazon site (its sign-in page if you are not signed in recently).
 6. Open `chrome-extension://<id>/dev/preview.html`, or `chrome-extension://<id>/popup/popup.html?preview=signed-in`, to see the signed-in preview. `<id>` is on the extension card.
+
+## Accounts across browser profiles (2026-10-07)
+
+Run the local server, then reload Waybill in each profile:
+
+    node server/server.mjs      # 127.0.0.1:4417, Waybill's extension origin only
+    node --test                 # server tests (6, built-in runner)
+
+Each profile's background worker connects, registers its Amazon account
+summaries (never orders), and reads orders in that profile when asked.
+
+Executed in Chrome for Testing 1243 with two separate profiles, the real
+server, synthetic Amazon pages per profile, and no outside network:
+
+| Check | Result |
+| --- | --- |
+| Profile A's Activity list | A's .com and .co.uk ("This browser profile") and B's .com ("Another browser profile") |
+| Select B's account in A | Orders read by B (Amazon requests seen only in B), shown as "Read live from Amazon in another browser profile" |
+| Order cards filled in late by page script, like Amazon's decryption | Read correctly |
+| Server stopped, Activity reloaded | "Accounts in this browser profile" with the fallback notice; A's accounts still load |
+| Extension errors with the server down (developer mode on) | None |
+
+Not yet tested on real Amazon across two real profiles.
+
+To watch a live read, open `activity/activity.html?showOrdersWindow` (development
+builds, this-profile mode): the Amazon window stays open for DevTools.
