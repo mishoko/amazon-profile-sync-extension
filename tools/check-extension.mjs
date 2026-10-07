@@ -9,12 +9,13 @@ const fail = (msg) => failures.push(msg);
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 if (manifest.manifest_version !== 3) fail('manifest_version must be 3');
 for (const key of ['name', 'version', 'action']) if (!manifest[key]) fail(`missing ${key}`);
-for (const key of ['optional_permissions', 'optional_host_permissions', 'background', 'content_scripts']) {
+for (const key of ['optional_permissions', 'optional_host_permissions', 'content_scripts']) {
   if (key in manifest) fail(`unexpected ${key}: not needed yet`);
 }
 // storage: marketplace settings and this profile's Amazon account summaries.
 // scripting: read decrypted order cards from Amazon's orders page.
-const allowedPermissions = ['storage', 'scripting'];
+// alarms: retry the local-server connection every minute.
+const allowedPermissions = ['storage', 'scripting', 'alarms'];
 for (const permission of manifest.permissions ?? []) {
   if (!allowedPermissions.includes(permission)) fail(`unexpected permission ${permission}`);
 }
@@ -23,6 +24,9 @@ const amazonOrigin = /^https:\/\/www\.amazon\.[a-z.]+\/\*$/;
 for (const origin of manifest.host_permissions ?? []) {
   if (!amazonOrigin.test(origin)) fail(`unexpected host permission ${origin}`);
 }
+
+const worker = manifest.background?.service_worker;
+if (worker && !existsSync(join(root, worker))) fail(`missing service worker ${worker}`);
 
 const pngSize = (file) => {
   const buf = readFileSync(file);
@@ -57,9 +61,10 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
   return statSync(p).isDirectory() ? walk(p) : [p];
 });
-// The Amazon marketplace origin template (covered by host_permissions) and the
-// OpenID identifiers Amazon's sign-in URL carries as parameters (never fetched).
-const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g, /http:\/\/specs\.openid\.net\/auth\/2\.0(?:\/identifier_select)?/g];
+// The Amazon marketplace origin template (covered by host_permissions), the
+// OpenID identifiers Amazon's sign-in URL carries as parameters (never fetched),
+// and the local Waybill server on the loopback interface.
+const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g, /http:\/\/specs\.openid\.net\/auth\/2\.0(?:\/identifier_select)?/g, /http:\/\/127\.0\.0\.1:4417/g];
 for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !/\/(tools|server|\.git)\//.test(f))) {
   const text = navigationTargets.reduce((t, target) => t.replace(target, ''), readFileSync(file, 'utf8'));
   if (/https?:\/\//.test(text.replace(/xmlns=['"]http:\/\/www\.w3\.org\/2000\/svg['"]/g, ''))) {

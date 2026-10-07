@@ -3,9 +3,14 @@
   "name": "Waybill",
   "version": "0.1.0",
   "description": "Track your marketplace purchases and order statuses.",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
   "permissions": [
     "storage",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "https://www.amazon.com/*",
