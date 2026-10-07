@@ -2,25 +2,30 @@
 // that account's orders live from Amazon. Orders are kept in page memory only.
 //
 // With the local server running (server/server.mjs) the list holds the
-// accounts of every browser profile with Waybill, and a selected account's
-// orders are read by the profile that is signed into it. Without the server,
-// it falls back to this profile's accounts, read directly.
+// accounts of every browser profile with Waybill, pushed by the server as they
+// change, and a selected account's orders are read by the profile that is
+// signed into it. Without the server it falls back to this profile's saved
+// accounts (updated as they change) and keeps checking for the server.
 import { createStore } from '../lib/store.js';
 import { loadAccounts, markNeedsSignIn } from '../lib/storage.js';
 import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
 import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
-import { getInstanceId, fetchAccounts, requestOrders } from '../lib/server.js';
+import { getInstanceId, watchAccounts, requestOrders } from '../lib/server.js';
 
 // Development builds only: activity.html?showOrdersWindow keeps the Amazon
 // window visible and open, to inspect its requests in DevTools.
 const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
 const orderReadOptions = { visible: isDevelopmentBuild && new URLSearchParams(location.search).has('showOrdersWindow') };
 
-// Where accounts and orders come from. Accounts share one shape:
+const SERVER_RETRY_MS = 5000;
+
+// Where accounts and orders come from. subscribe(onAccounts, onLost) delivers
+// the account list now and after every change, and returns an unsubscribe
+// function. Accounts share one shape:
 // { key, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, online }] }
 const allProfiles = {
   scope: 'all-profiles',
-  accounts: fetchAccounts,
+  subscribe: watchAccounts,
   async orders(account, filter) {
     const { instanceId, result } = await requestOrders(account.key, filter);
     return { ...result, servedBy: instanceId };
@@ -29,11 +34,17 @@ const allProfiles = {
 
 const thisProfile = (instanceId) => ({
   scope: 'this-profile',
-  async accounts() {
-    return (await loadAccounts())
+  subscribe(onAccounts) {
+    const load = async () => onAccounts((await loadAccounts())
       .filter((account) => account.marketplace === 'amazon')
       .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, online: true }] }))
-      .sort((a, b) => a.domain.localeCompare(b.domain));
+      .sort((a, b) => a.domain.localeCompare(b.domain)));
+    const onChanged = (changes, area) => {
+      if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) load();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    load();
+    return () => chrome.storage.onChanged.removeListener(onChanged);
   },
   async orders(account, filter) {
     const result = filter
@@ -44,13 +55,9 @@ const thisProfile = (instanceId) => ({
   },
 });
 
-// The local server if it's running (after the background worker has
-// registered this profile), else this profile alone.
-async function chooseSource() {
-  const answer = await chrome.runtime.sendMessage({ type: 'connect' }).catch(() => null);
-  const instanceId = answer?.instanceId ?? await getInstanceId();
-  return { instanceId, source: answer?.connected ? allProfiles : thisProfile(instanceId) };
-}
+// Asks the background worker to connect this profile to the local server:
+// { connected, instanceId }, or null if the worker didn't answer.
+const connectToServer = () => chrome.runtime.sendMessage({ type: 'connect' }).catch(() => null);
 
 const initialState = {
   scope: null,
@@ -239,12 +246,35 @@ store.subscribe((state) => {
   renderDetail(state);
 });
 
-const chosen = await chooseSource();
-const { instanceId } = chosen;
-source = chosen.source;
-const accounts = await source.accounts().catch(async () => {
-  source = thisProfile(instanceId); // The server went away between connecting and listing.
-  return source.accounts();
-});
-store.dispatch({ type: 'accounts-loaded', scope: source.scope, instanceId, accounts });
-if (accounts.length === 1) selectAccount(accounts[0].key);
+let unsubscribe = () => {};
+let firstList = true;
+
+function use(next, instanceId) {
+  unsubscribe();
+  source = next;
+  unsubscribe = next.subscribe((accounts) => {
+    store.dispatch({ type: 'accounts-loaded', scope: next.scope, instanceId, accounts });
+    if (firstList && accounts.length === 1) selectAccount(accounts[0].key);
+    firstList = false;
+  }, () => {
+    // The server stopped: show this profile's accounts until it is back.
+    use(thisProfile(instanceId), instanceId);
+    waitForServer(instanceId);
+  });
+}
+
+function waitForServer(instanceId) {
+  setTimeout(async () => {
+    if ((await connectToServer())?.connected) use(allProfiles, instanceId);
+    else waitForServer(instanceId);
+  }, SERVER_RETRY_MS);
+}
+
+const answer = await connectToServer();
+const instanceId = answer?.instanceId ?? await getInstanceId();
+if (answer?.connected) {
+  use(allProfiles, instanceId);
+} else {
+  use(thisProfile(instanceId), instanceId);
+  waitForServer(instanceId);
+}
