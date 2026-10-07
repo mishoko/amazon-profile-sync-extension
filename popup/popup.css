@@ -103,6 +103,23 @@ select:focus-visible {
   margin-top: 22px;
 }
 
+/* Development-build simulated sign-in; the reference's loading state was never observed. */
+.spinner {
+  display: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgb(255 255 255 / 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.button[aria-busy="true"] { cursor: progress; }
+.button[aria-busy="true"] svg { display: none; }
+.button[aria-busy="true"] .spinner { display: block; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .note {
   margin: 11px 0 0;
   font-size: 12px;
