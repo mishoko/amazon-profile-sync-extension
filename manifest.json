@@ -10,7 +10,8 @@
   "permissions": [
     "storage",
     "scripting",
-    "alarms"
+    "alarms",
+    "offscreen"
   ],
   "host_permissions": [
     "https://www.amazon.com/*",

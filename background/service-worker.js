@@ -1,10 +1,14 @@
-// Background service worker: connects this browser profile to the local
-// Waybill server, keeps the server's list of this profile's Amazon accounts
-// current, and answers order requests by reading Amazon in this profile.
-// Nothing is sent when the server isn't running; it retries every minute.
+// Background service worker:
+// - connects this browser profile to the local Waybill server, keeps the
+//   server's list of this profile's Amazon accounts current, and answers
+//   order requests by reading Amazon in this profile (nothing is sent when the
+//   server isn't running; it retries every minute);
+// - while Amazon is switched on, follows the user's Amazon sign-ins and
+//   sign-outs so the account list stays current without opening the popup.
 import { getInstanceId, connectUrl, isServerRunning } from '../lib/server.js';
-import { loadAccounts, markNeedsSignIn } from '../lib/storage.js';
-import { readOrders, readLatestOrders } from '../lib/amazon-orders.js';
+import { loadAccounts, loadAccount, storeAccount, loadMarketplaces, markNeedsSignIn } from '../lib/storage.js';
+import { AMAZON_DOMAINS } from '../lib/amazon.js';
+import { readOrders, readLatestOrders, isOrdersWindow } from '../lib/amazon-orders.js';
 
 const KEEPALIVE_MS = 20_000; // WebSocket traffic keeps an MV3 service worker alive.
 const RECONNECT_ALARM = 'reconnect';
@@ -57,6 +61,73 @@ function connect() {
   return connected;
 }
 
+// --- Following Amazon sign-ins and sign-outs -------------------------------
+// Signing out (Amazon's sign-out page) forgets the account at once, without a
+// request. Leaving Amazon's sign-in pages (a sign-in just finished) checks the
+// account. Other Amazon page loads re-check at most every RECHECK_MS. No check
+// runs while the user is on a sign-in page, so it can't disturb a sign-in.
+const CHECK_DELAY_MS = 1500;
+const RECHECK_MS = 5 * 60_000;
+const lastChecked = new Map(); // domain -> time
+const inSignIn = new Set(); // domains whose last page was a sign-in page
+const pendingChecks = new Map(); // domain -> timer
+
+const amazonDomainOf = (url) => AMAZON_DOMAINS.find((domain) => url.hostname === `www.amazon${domain}`);
+
+async function readAccountOffscreen(domain, known) {
+  const [existing] = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (!existing) {
+    await chrome.offscreen.createDocument({
+      url: 'background/offscreen.html',
+      reasons: ['DOM_PARSER'],
+      justification: 'Read which Amazon account is signed in from Amazon pages.',
+    }).catch(() => {}); // Already being created by a concurrent check.
+  }
+  const answer = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-account', domain, known });
+  if (answer?.error) throw new Error(answer.error);
+  return answer.account;
+}
+
+async function checkAccount(domain) {
+  pendingChecks.delete(domain);
+  if (!(await loadMarketplaces()).amazon.enabled) return;
+  lastChecked.set(domain, Date.now());
+  try {
+    await storeAccount('amazon', domain, await readAccountOffscreen(domain, await loadAccount('amazon', domain)));
+  } catch {
+    // Amazon unreachable or a robot check: keep the last known state.
+  }
+}
+
+async function followAmazonPage(tab, change) {
+  const url = new URL(change.url ?? tab.url);
+  const domain = amazonDomainOf(url);
+  if (!domain || await isOrdersWindow(tab.windowId)) return;
+  if (!(await loadMarketplaces()).amazon.enabled) return;
+
+  if (change.url && url.pathname.includes('/sign-out')) {
+    clearTimeout(pendingChecks.get(domain));
+    pendingChecks.delete(domain);
+    await storeAccount('amazon', domain, { status: 'signed-out' });
+    return;
+  }
+  if (change.status !== 'complete') return;
+  if (url.pathname.startsWith('/ap/')) {
+    inSignIn.add(domain);
+    return;
+  }
+  const signInFinished = inSignIn.delete(domain);
+  if (!signInFinished && Date.now() - (lastChecked.get(domain) ?? 0) < RECHECK_MS) return;
+  clearTimeout(pendingChecks.get(domain));
+  pendingChecks.set(domain, setTimeout(() => checkAccount(domain), CHECK_DELAY_MS));
+}
+
+// Amazon host permissions make tab URLs visible for Amazon pages only.
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if ((change.url || change.status === 'complete') && tab.url) followAmazonPage(tab, change);
+});
+
+// --- Server registration -----------------------------------------------------
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) sendAccounts();
 });

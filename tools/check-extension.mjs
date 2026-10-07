@@ -15,7 +15,8 @@ for (const key of ['optional_permissions', 'optional_host_permissions', 'content
 // storage: marketplace settings and this profile's Amazon account summaries.
 // scripting: read decrypted order cards from Amazon's orders page.
 // alarms: retry the local-server connection every minute.
-const allowedPermissions = ['storage', 'scripting', 'alarms'];
+// offscreen: parse Amazon pages (DOMParser) for the background account check.
+const allowedPermissions = ['storage', 'scripting', 'alarms', 'offscreen'];
 for (const permission of manifest.permissions ?? []) {
   if (!allowedPermissions.includes(permission)) fail(`unexpected permission ${permission}`);
 }
@@ -41,7 +42,7 @@ for (const [size, rel] of Object.entries(icons)) {
 }
 
 // Every local reference in extension pages must resolve; nothing may load from the network.
-const pages = [manifest.action.default_popup, ...['pages', 'dev', 'activity'].flatMap((dir) =>
+const pages = [manifest.action.default_popup, ...['pages', 'dev', 'activity', 'background'].flatMap((dir) =>
   readdirSync(join(root, dir)).filter((f) => f.endsWith('.html')).map((f) => `${dir}/${f}`))];
 for (const rel of pages) {
   const file = join(root, rel);
