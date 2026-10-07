@@ -125,8 +125,23 @@ async function loadOrders(key, filter = null) {
   }
 }
 
+// The selected account's server ID is kept in the address, like
+// activity.html?type=amazon&id=3, so the link reopens the same account.
+function showAccountInAddress(account) {
+  const url = new URL(location.href);
+  if (account?.id) {
+    url.searchParams.set('type', account.marketplace);
+    url.searchParams.set('id', String(account.id));
+  } else {
+    url.searchParams.delete('type');
+    url.searchParams.delete('id');
+  }
+  history.replaceState(null, '', url);
+}
+
 function selectAccount(key) {
   store.dispatch({ type: 'account-selected', key });
+  showAccountInAddress(store.getState().accounts.items.find((account) => account.key === key));
   const entry = store.getState().orders[key];
   if (!entry || entry.status === 'error' || entry.status === 'needs-sign-in') loadOrders(key);
 }
@@ -237,7 +252,7 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
       h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 40, height: 40 }),
       h('div', {},
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
-        h('p', { class: 'detail-sub', text: account.email ?? account.name ?? '' })),
+        h('p', { class: 'detail-sub', text: [account.email ?? account.name, account.id && `Account #${account.id}`].filter(Boolean).join(' · ') })),
       period),
     status,
     body].filter(Boolean));
@@ -252,13 +267,18 @@ store.subscribe((state) => {
 
 let unsubscribe = () => {};
 let firstList = true;
+const requestedId = Number(new URLSearchParams(location.search).get('id')) || null;
 
 function use(next, instanceId) {
   unsubscribe();
   source = next;
   unsubscribe = next.subscribe((accounts) => {
     store.dispatch({ type: 'accounts-loaded', scope: next.scope, instanceId, accounts });
-    if (firstList && accounts.length === 1) selectAccount(accounts[0].key);
+    if (firstList) {
+      const requested = requestedId && accounts.find((account) => account.id === requestedId);
+      if (requested) selectAccount(requested.key);
+      else if (accounts.length === 1) selectAccount(accounts[0].key);
+    }
     firstList = false;
   }, () => {
     // The server stopped: show this profile's accounts until it is back.
