@@ -8,7 +8,8 @@ This checks:
 - the manifest is valid MV3 and declares no permissions, service worker or content scripts;
 - every referenced icon exists at its declared size;
 - every local `href`/`src` resolves;
-- there are no inline scripts or handlers, and no remote URLs.
+- there are no inline scripts or handlers, and no remote URLs other than the
+  Amazon orders link target (a navigation the user opens, never fetched).
 
 ## Browser check (run 2026-10-06)
 
@@ -32,11 +33,28 @@ Signed-in preview (`popup.html?preview=signed-in`), same setup:
 | Console errors / non-extension requests | none / none |
 | Tab order | Amazon switch, Amazon chevron, AliExpress switch, AliExpress chevron, Go to account, Activity, Log out |
 | Space on switch / Enter on Amazon chevron | `aria-checked` becomes true / details shown, `aria-expanded` becomes true |
-| AliExpress chevron, Activity (`aria-disabled`) | No effect |
-| Amazon "Log in" / Go to account | Opens `pages/marketplace-pending.html#amazon` / `pages/web-app-pending.html#account` |
+| Amazon chevron, click or Enter while switch off | No effect; `aria-disabled="true"` |
+| Switch Amazon off while expanded | Details hidden; chevron disabled again |
+| AliExpress switched on, then chevron clicked | No effect; chevron stays disabled |
+| Activity (`aria-disabled`) | No effect |
+| Amazon "Log in", each of the 11 marketplaces | `href` is `https://www.amazon<domain>/your-orders/orders?orderFilter=last30` |
+| Amazon "Log in" clicked with .it | New tab at the .it URL, no `Referer`. Outbound requests were stubbed, so Amazon was never contacted. |
+| Go to account | Opens `pages/web-app-pending.html#account` |
 | Log out | Returns to the signed-out view and hides the email pill |
 | Unknown `?preview=` value | Signed-out view |
 | `dev/preview.html` | Renders both states |
+
+Simulated sign-in (2026-10-07, same setup, no `?preview=`):
+
+| Check | Result |
+| --- | --- |
+| Initial view / note | Signed out / "Development build: simulated sign-in, no account is used" |
+| Enter on "Log in" | `aria-busy="true"`, label "Logging in…", spinner shown, no new tab |
+| Second click while busy | Ignored |
+| Time to signed-in view | 2512 ms; email pill `preview@example.com` |
+| Reload after sign-in / after Log out | Signed in / signed out |
+| `dev/preview.html` | Signed-out and signed-in frames regardless of stored state |
+| Console errors / non-extension requests | none / none |
 
 Not covered: the real toolbar-bubble rendering in Chrome, because headless
 Chrome can't open action popups. This was checked by loading the page
@@ -49,7 +67,8 @@ The reference and our render are saved at matching sizes:
 - `reference/signed-in-*.png`: 420×319
 - `reference/signed-in-expanded-*.png`: 420×449
 
-Calibration renders swap in the reference's strings (and, for the signed-in
+The signed-in rows above, except actions, compare the committed renders as they
+are (y ranges in page pixels). Calibration renders swap in the reference's strings (and, for the signed-in
 view, its email) in a scratch copy that is never committed.
 
 Mean per-pixel difference (0–255), signed out:
@@ -68,10 +87,10 @@ Signed in:
 
 | Region | Mean diff | Notes |
 | --- | --- | --- |
-| Collapsed: marketplace band and cards | 1.92 | Mostly the replaced marketplace logos |
-| Collapsed: actions | 2.10 | Own-drawn glyphs; label within 1px |
-| Expanded: card head | 2.85 | Logo tile |
-| Expanded: details | 0.73 | |
+| Collapsed: marketplace band and cards | 0.78 | Was 1.92 with letter tiles; the rest is the Amazon tile |
+| Collapsed: actions | 2.10 | Own-drawn glyphs; label within 1px (calibration render with the reference's label) |
+| Expanded: card head (y 50–120) | 0.93 | Was 2.17 with letter tiles |
+| Expanded: details | 0.74 | |
 | Collapsed header | 9.69 | Intentional: branding and a different fixture email |
 
 In the signed-out view, every block's bounding box (dividers, tile, title,
@@ -84,5 +103,7 @@ and button edges match to the pixel; the chevron is within 1px.
 
 1. Open `chrome://extensions` (or `brave://extensions`), enable Developer mode, choose **Load unpacked**, and select the repo root.
 2. Pin "Waybill" and click its toolbar icon. You should see the signed-out popup with no errors on the extension card.
-3. Press Tab twice; focus should move to "Log in" and then "Sign up now". Press Enter on each; a new tab should show the "not available yet" page.
-4. Open `chrome-extension://<id>/dev/preview.html`, or `chrome-extension://<id>/popup/popup.html?preview=signed-in`, to see the signed-in preview. `<id>` is on the extension card.
+3. Press Tab twice; focus should move to "Log in" and then "Sign up now". Enter on "Sign up now" opens the "not available yet" page in a new tab.
+4. Click "Log in": "Logging in…" for about 2.5s, then the signed-in view. Close and reopen the popup: still signed in until "Log out".
+5. Switch Amazon on, open its details, pick a marketplace and click "Log in": a new tab opens on that Amazon site (its sign-in page if you are not signed in recently).
+6. Open `chrome-extension://<id>/dev/preview.html`, or `chrome-extension://<id>/popup/popup.html?preview=signed-in`, to see the signed-in preview. `<id>` is on the extension card.

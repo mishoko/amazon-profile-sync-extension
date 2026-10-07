@@ -64,8 +64,9 @@ Interactions:
 
 | Control | Behaviour | Evidence |
 | --- | --- | --- |
-| Toggle switches | Both states seen: off (live), Amazon on (stale window). What switching on does is unknown. | Visual only |
-| Chevrons | Expanded Amazon seen, with the chevron pointing up. The trigger is assumed to be the chevron. AliExpress expanded was never seen. | Visual only |
+| Toggle switches | Both states seen: off (live), Amazon on (stale window). Beyond enabling the chevron, what switching on does is unknown. | Visual only |
+| Chevrons | Can only be opened while the marketplace's switch is on. Expanded Amazon seen, with the chevron pointing up. AliExpress expanded was never seen. | User report (2026-10-07); visual |
+| Amazon "Log in" | Opens a new tab on the selected marketplace's Amazon sign-in. For .it: `www.amazon.it/ap/signin?…return_to=…amazon.it/your-orders/orders?orderFilter=last30…assoc_handle=amzn_retail_yourorders_it…language=en_GB…`; for .com the same with `_us` and `en_US`. `max_auth_age=0` makes Amazon ask for the password even when already signed in. | User report (2026-10-07) |
 | Go to Trackerbot account, Activity, Log out | Not exercised. The user reports that logout propagates to the web app. | — |
 
 Clicks sent by automation to the live popup did not register, so none of these
@@ -86,19 +87,31 @@ mean watching the extension's own network traffic during login, which hasn't
 been done. This project does not need their mechanism; ours will be designed
 with the companion app.
 
+## Amazon sign-in URL (verified 2026-10-07)
+
+An unauthenticated request to `https://www.amazon<domain>/your-orders/orders?orderFilter=last30`
+gets a 302 from Amazon to exactly the sign-in URLs reported above: byte for
+byte for .com, and for .it with `Accept-Language: en-GB`. Amazon chooses
+`assoc_handle` and `language` itself; it gave the same shape for .ca, .com.au,
+.de, .ie, .ae and .sa. .co.uk, .es and .fr answered 503 (bot check) to plain
+requests and were not confirmed. Whether the reference opens the orders page
+or the sign-in URL directly can't be told from the tab it ends on.
+
 ## Intentional differences (implementation)
 
 - **Branding:** name "Waybill", our own route-"W" mark (`icons/icon.svg`), and a text wordmark instead of the logotype.
-- **Marketplace logos:** replaced by neutral letter tiles ("a" and "A"). The real marks are third-party trademarks.
+- **Marketplace logos:** official marks, bundled locally in `icons/marketplaces/`.
+  - AliExpress: AliExpress's own app icon, from aliexpress.com's `og:image`, downscaled to 64px.
+  - Amazon: Amazon's "a" and smile glyph (Wikimedia Commons, credited to Amazon.com, Inc.) placed on a dark tile sized to the reference. The reference's tile is a different rendering of the same mark (heavier "a"); the 32px tile differs by a mean of 16.8/255.
 - **Copy:** "Opens the Waybill web app in a new tab"; "Go to Waybill account".
 - **No real service behind any control.** Each control has an explicit local outcome:
-  - Log in / Sign up now / Go to account open the local `pages/web-app-pending.html`.
-  - Amazon "Log in" opens `pages/marketplace-pending.html`; no marketplace page is opened.
-  - Nothing is sent and no account is created or connected.
-- **Signed-in view is a development preview only.** It is shown solely for `popup.html?preview=signed-in` in unpacked builds, using `dev/preview-sessions.js`. Real (store) builds always show State A. "Log out" in the preview just returns to State A.
+  - Sign up now / Go to account open the local `pages/web-app-pending.html`.
+  - Amazon "Log in" opens Amazon itself (see above), in a new tab without a referrer. Nothing comes back to the extension, so Connection stays "Inactive".
+  - Nothing is sent to any Waybill service, and no Waybill account is created.
+- **Sign-in is simulated, in development builds only.** "Log in" shows "Logging in…" with a spinner for 2.5s, then State B with the fixture `preview@example.com` from `dev/preview-sessions.js`. It persists in the popup's `localStorage` until "Log out". The note under the button reads "Development build: simulated sign-in, no account is used". Store builds keep the reference behaviour (open the web app in a new tab). `popup.html?preview=<name>` still forces a fixture. The loading state is ours: the reference's was never seen.
 - **Unobserved behaviour is not invented:**
-  - Switches and the Amazon chevron change local UI state only.
-  - The AliExpress chevron and "Activity" are marked `aria-disabled`.
+  - Switches change local UI state only. Switching Amazon off also collapses its details (our choice; not observed).
+  - The AliExpress chevron stays `aria-disabled` even when switched on, and "Activity" is `aria-disabled`.
   - The marketplace select options are taken from the reference's Amazon host list, not from observation.
 - **Glyphs:** the lock, external-link, chevron, activity and log-out glyphs are our own drawings, matched in size only.
 - **Not reproduced:** no permissions, service worker, working window, or telemetry.
