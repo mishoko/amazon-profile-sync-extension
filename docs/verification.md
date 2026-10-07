@@ -112,8 +112,15 @@ and button edges match to the pixel; the chevron is within 1px.
 
 Run the local server, then reload Waybill in each profile:
 
-    node server/server.mjs      # 127.0.0.1:4417, Waybill's extension origin only
-    node --test                 # server tests (6, built-in runner)
+    docker compose up -d --build   # in a container, published on 127.0.0.1:4417 only
+    node server/server.mjs         # or directly with Node 22
+    node --test                    # server tests (built-in runner)
+
+The container runs as a non-root user with a read-only filesystem, no
+capabilities, and no npm dependencies. Checked: the server answers on
+127.0.0.1, rejects other origins and Host headers, and is not reachable on
+the machine's LAN address. The two-profile checks below also pass against
+the container (Compose project on port 4499), including stop and restart.
 
 Each profile's background worker connects, registers its Amazon account
 summaries (never orders), and reads orders in that profile when asked.

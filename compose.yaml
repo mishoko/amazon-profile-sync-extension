@@ -1,0 +1,16 @@
+# docker compose up -d   → the local Waybill server on 127.0.0.1:4417
+# The port is published on the loopback interface only, never the network.
+# WAYBILL_PORT changes it (the server and the published port must match,
+# because the server checks the Host header the browser sends).
+services:
+  server:
+    build: .
+    environment:
+      WAYBILL_PORT: ${WAYBILL_PORT:-4417}
+      WAYBILL_EXTENSION_IDS: ${WAYBILL_EXTENSION_IDS:-iibmbonngmdgckjdjpilmapdgldhkeog}
+    ports:
+      - "127.0.0.1:${WAYBILL_PORT:-4417}:${WAYBILL_PORT:-4417}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped

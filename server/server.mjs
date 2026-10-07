@@ -13,7 +13,8 @@
 // - State is in memory; profiles re-register when they reconnect.
 // - Listens on 127.0.0.1 only and accepts only Waybill's extension origin(s).
 //
-// Run: node server/server.mjs   (WAYBILL_PORT, WAYBILL_EXTENSION_IDS to override)
+// Run: node server/server.mjs, or docker compose up
+// (WAYBILL_PORT, WAYBILL_HOST, WAYBILL_EXTENSION_IDS to override)
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { acceptWebSocket } from './websocket.mjs';
@@ -205,8 +206,10 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
   });
 
   return {
-    listen(port = DEFAULT_PORT) {
-      return new Promise((resolve) => server.listen(port, '127.0.0.1', () => {
+    // `host` is 127.0.0.1 except inside a container, where Docker publishes
+    // the port on the machine's loopback interface only (compose.yaml).
+    listen(port = DEFAULT_PORT, host = '127.0.0.1') {
+      return new Promise((resolve) => server.listen(port, host, () => {
         const { port: actual } = server.address();
         allowedHosts = new Set([`127.0.0.1:${actual}`, `localhost:${actual}`]);
         resolve(actual);
@@ -222,6 +225,14 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const extensionIds = process.env.WAYBILL_EXTENSION_IDS?.split(',').map((id) => id.trim()).filter(Boolean);
-  const port = await createWaybillServer({ extensionIds }).listen(Number(process.env.WAYBILL_PORT) || DEFAULT_PORT);
-  console.log(`Waybill local server listening on 127.0.0.1:${port}`);
+  const host = process.env.WAYBILL_HOST || '127.0.0.1';
+  const waybill = createWaybillServer({ extensionIds });
+  const port = await waybill.listen(Number(process.env.WAYBILL_PORT) || DEFAULT_PORT, host);
+  console.log(`Waybill local server listening on ${host}:${port}`);
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, async () => {
+      await waybill.close();
+      process.exit(0);
+    });
+  }
 }
