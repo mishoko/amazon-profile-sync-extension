@@ -54,19 +54,32 @@ function renderSignedOut() {
   showView('signed-out');
 }
 
+function setExpanded(chevron, expanded) {
+  chevron.setAttribute('aria-expanded', String(expanded));
+  document.getElementById(chevron.getAttribute('aria-controls')).hidden = !expanded;
+}
+
+// A marketplace's details can only be opened while its switch is on.
+// AliExpress has no details: its expanded view was never observed.
+function setMarketplaceOn(toggle, on) {
+  toggle.setAttribute('aria-checked', String(on));
+  const chevron = toggle.closest('.card').querySelector('.chevron');
+  if (!chevron.hasAttribute('aria-controls')) return;
+  if (!on) setExpanded(chevron, false);
+  chevron.setAttribute('aria-disabled', String(!on));
+}
+
 // Local UI state only: nothing here connects, enables, or saves anything.
 document.addEventListener('click', (event) => {
   const toggle = event.target.closest('.switch');
   if (toggle) {
-    toggle.setAttribute('aria-checked', String(toggle.getAttribute('aria-checked') !== 'true'));
+    setMarketplaceOn(toggle, toggle.getAttribute('aria-checked') !== 'true');
     return;
   }
 
   const chevron = event.target.closest('.chevron:not([aria-disabled="true"])');
   if (chevron) {
-    const expanded = chevron.getAttribute('aria-expanded') !== 'true';
-    chevron.setAttribute('aria-expanded', String(expanded));
-    document.getElementById(chevron.getAttribute('aria-controls')).hidden = !expanded;
+    setExpanded(chevron, chevron.getAttribute('aria-expanded') !== 'true');
     return;
   }
 
