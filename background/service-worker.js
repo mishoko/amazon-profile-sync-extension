@@ -21,7 +21,7 @@ const send = (message) => socket?.readyState === WebSocket.OPEN && socket.send(J
 async function sendAccounts() {
   const accounts = (await loadAccounts())
     .filter((account) => account.marketplace === 'amazon')
-    .map(({ marketplace, domain, customerId = null, name = null, email = null, status }) => ({ marketplace, domain, customerId, name, email, status }));
+    .map(({ marketplace, domain, customerId = null, name = null, email = null, status, signedInAt = null }) => ({ marketplace, domain, customerId, name, email, status, signedInAt }));
   send({ type: 'accounts', accounts });
 }
 
@@ -70,7 +70,7 @@ const CHECK_DELAY_MS = 1500;
 const RECHECK_MS = 5 * 60_000;
 const lastChecked = new Map(); // domain -> time
 const inSignIn = new Set(); // domains whose last page was a sign-in page
-const pendingChecks = new Map(); // domain -> timer
+const pendingChecks = new Map(); // domain -> { timer, afterSignIn }
 
 const amazonDomainOf = (url) => AMAZON_DOMAINS.find((domain) => url.hostname === `www.amazon${domain}`);
 
@@ -88,12 +88,15 @@ async function readAccountOffscreen(domain, known) {
   return answer.account;
 }
 
-async function checkAccount(domain) {
+// `afterSignIn`: the user just finished signing in on this marketplace.
+async function checkAccount(domain, { afterSignIn = false } = {}) {
   pendingChecks.delete(domain);
   if (!(await loadMarketplaces()).amazon.enabled) return;
   lastChecked.set(domain, Date.now());
   try {
-    await storeAccount('amazon', domain, await readAccountOffscreen(domain, await loadAccount('amazon', domain)));
+    const account = await readAccountOffscreen(domain, await loadAccount('amazon', domain));
+    const signedIn = afterSignIn && account.status === 'active';
+    await storeAccount('amazon', domain, signedIn ? { ...account, signedInAt: Date.now() } : account);
   } catch {
     // Amazon unreachable or a robot check: keep the last known state.
   }
@@ -106,7 +109,7 @@ async function followAmazonPage(tab, change) {
   if (!(await loadMarketplaces()).amazon.enabled) return;
 
   if (change.url && url.pathname.includes('/sign-out')) {
-    clearTimeout(pendingChecks.get(domain));
+    clearTimeout(pendingChecks.get(domain)?.timer);
     pendingChecks.delete(domain);
     await storeAccount('amazon', domain, { status: 'signed-out' });
     return;
@@ -118,8 +121,11 @@ async function followAmazonPage(tab, change) {
   }
   const signInFinished = inSignIn.delete(domain);
   if (!signInFinished && Date.now() - (lastChecked.get(domain) ?? 0) < RECHECK_MS) return;
-  clearTimeout(pendingChecks.get(domain));
-  pendingChecks.set(domain, setTimeout(() => checkAccount(domain), CHECK_DELAY_MS));
+  // A pending "just signed in" check keeps that flag when rescheduled.
+  const pending = pendingChecks.get(domain);
+  clearTimeout(pending?.timer);
+  const afterSignIn = signInFinished || Boolean(pending?.afterSignIn);
+  pendingChecks.set(domain, { afterSignIn, timer: setTimeout(() => checkAccount(domain, { afterSignIn }), CHECK_DELAY_MS) });
 }
 
 // Amazon host permissions make tab URLs visible for Amazon pages only.

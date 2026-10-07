@@ -160,6 +160,15 @@ and right after a server restart the account list (IDs 1-3) comes back from
 the database, marked offline, before profiles reconnect. Bob's account keeps
 its ID across his sign-out and sign-in.
 
+Account IDs and removal (server + Postgres in Docker):
+
+| Check | Result |
+| --- | --- |
+| Select Bob's account | Address becomes `activity.html?type=amazon&id=3`; header shows "Account #3"; opening that address selects it |
+| × on Bob's card | Inline confirmation, focus on "Remove"; after Remove, gone from every open Activity and from the API |
+| B, still signed in, reconnects and reports it again | Stays removed |
+| B signs in to it again | Back, with the same ID 3 |
+
 Tests run on a copy of the extension pointed at port 4499, never at 4417,
 so they can't reach a server or browser profile in real use. In that copy
 the offscreen page's Amazon requests are answered by a stand-in, because

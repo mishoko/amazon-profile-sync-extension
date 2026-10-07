@@ -79,6 +79,44 @@ select:focus-visible {
 }
 
 .account[aria-current="true"] { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+
+.account-item { position: relative; }
+
+/* The remove "×", a chip-style close button on the card's top corner. */
+.remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.remove:hover { border-color: var(--danger); color: var(--danger); }
+
+.confirm-removal {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid #f5c2c4;
+  border-radius: 10px;
+  background: #fdf4f4;
+  font-size: 13px;
+}
+.confirm-removal p { margin: 0 0 8px; color: var(--ink-footer); }
+.confirm-actions { display: flex; gap: 8px; }
+.confirm-actions button { height: 28px; padding: 0 12px; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+.confirm-remove { border: 0; background: var(--danger); color: #fff; }
+.confirm-cancel { border: 1px solid var(--line); background: #fff; color: var(--ink-footer); }
+.confirm-actions button:disabled { opacity: 0.6; cursor: progress; }
 .account img { border-radius: 8px; }
 .account-name { display: block; font-size: 14px; font-weight: 700; }
 .account-sub { display: block; overflow: hidden; font-size: 12px; color: var(--ink-muted); text-overflow: ellipsis; white-space: nowrap; }

@@ -10,7 +10,7 @@ import { createStore } from '../lib/store.js';
 import { loadAccounts, markNeedsSignIn } from '../lib/storage.js';
 import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
 import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
-import { getInstanceId, watchAccounts, requestOrders } from '../lib/server.js';
+import { getInstanceId, watchAccounts, requestOrders, removeAccount } from '../lib/server.js';
 
 // Development builds only: activity.html?showOrdersWindow keeps the Amazon
 // window visible and open, to inspect its requests in DevTools.
@@ -68,6 +68,8 @@ const initialState = {
   instanceId: null,
   accounts: { status: 'loading', items: [] },
   selectedKey: null,
+  // Removing an account (server only): { key, status: 'confirming' | 'removing' | 'failed', error }
+  removal: null,
   // Per account key: { requestId, status: 'loading' | 'loaded' | 'needs-sign-in' | 'error',
   //                    filter, filters, orders, error }
   orders: {},
@@ -75,8 +77,27 @@ const initialState = {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'accounts-loaded':
-      return { ...state, scope: action.scope, instanceId: action.instanceId, accounts: { status: 'ready', items: action.accounts } };
+    case 'accounts-loaded': {
+      const present = (key) => action.accounts.some((account) => account.key === key);
+      return {
+        ...state,
+        scope: action.scope,
+        instanceId: action.instanceId,
+        accounts: { status: 'ready', items: action.accounts },
+        // An account that left the list (removed, signed out) is no longer selected.
+        selectedKey: present(state.selectedKey) ? state.selectedKey : null,
+        removal: state.removal && present(state.removal.key) && action.scope === 'all-profiles' ? state.removal : null,
+      };
+    }
+    case 'removal-asked':
+      return { ...state, removal: { key: action.key, status: 'confirming', error: null } };
+    case 'removal-cancelled':
+      return { ...state, removal: null };
+    case 'removal-started':
+      return { ...state, removal: { key: action.key, status: 'removing', error: null } };
+    case 'removal-failed':
+      if (state.removal?.key !== action.key) return state;
+      return { ...state, removal: { key: action.key, status: 'failed', error: action.error } };
     case 'account-selected':
       return { ...state, selectedKey: action.key };
     case 'orders-requested': {
@@ -166,21 +187,58 @@ function profileLabel(account, instanceId) {
   return account.profiles.some((profile) => profile.online) ? 'Another browser profile' : 'Another browser profile · not connected';
 }
 
-function renderAccounts({ scope, instanceId, accounts, selectedKey }) {
+async function confirmRemoval(account) {
+  store.dispatch({ type: 'removal-started', key: account.key });
+  try {
+    await removeAccount(account.id);
+    // The server then pushes the list without this account.
+  } catch (error) {
+    store.dispatch({ type: 'removal-failed', key: account.key, error: error.message });
+  }
+}
+
+function renderRemoval(account, removal) {
+  const label = `Amazon ${account.domain} ${account.email ?? account.name ?? ''}`.trim();
+  if (removal?.key !== account.key) {
+    return h('button', {
+      class: 'remove', type: 'button', 'aria-label': `Remove ${label} from Waybill`, title: 'Remove from Waybill',
+      on: { click: () => store.dispatch({ type: 'removal-asked', key: account.key }) },
+    }, '×');
+  }
+  const busy = removal.status === 'removing';
+  return h('div', {
+    class: 'confirm-removal', role: 'group', 'aria-label': `Remove ${label}`,
+    on: { keydown: (event) => { if (event.key === 'Escape') store.dispatch({ type: 'removal-cancelled' }); } },
+  },
+  h('p', { text: removal.status === 'failed' ? `Couldn't remove: ${removal.error}` : 'Remove this account from Waybill? It comes back only if you sign in to it again.' }),
+  h('div', { class: 'confirm-actions' },
+    h('button', { class: 'confirm-remove', type: 'button', 'data-confirm-remove': true, disabled: busy, on: { click: () => confirmRemoval(account) }, text: busy ? 'Removing…' : 'Remove' }),
+    h('button', { class: 'confirm-cancel', type: 'button', disabled: busy, on: { click: () => store.dispatch({ type: 'removal-cancelled' }) }, text: 'Cancel' })));
+}
+
+function renderAccounts({ scope, instanceId, accounts, selectedKey, removal }) {
   document.querySelector('#accounts-title').textContent = scope === 'all-profiles' ? 'Accounts in all browser profiles' : 'Accounts in this browser profile';
   document.querySelector('[data-server-offline]').hidden = scope !== 'this-profile';
   const list = document.querySelector('[data-account-list]');
-  list.replaceChildren(...accounts.items.map((account) => h('li', {}, h('button', {
-    class: 'account', type: 'button', 'aria-current': String(account.key === selectedKey),
-    on: { click: () => selectAccount(account.key) },
-  },
-  h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 32, height: 32 }),
-  h('span', {},
-    h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
-    h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' }),
-    h('span', { class: 'account-sub', text: profileLabel(account, instanceId) })),
-  h('span', { class: 'pill', 'data-status': account.status, text: STATUS_LABELS[account.status] ?? 'Inactive' })))));
+  const hadConfirmFocus = document.activeElement?.closest?.('.confirm-removal');
+  list.replaceChildren(...accounts.items.map((account) => h('li', { class: 'account-item' },
+    h('button', {
+      class: 'account', type: 'button', 'aria-current': String(account.key === selectedKey),
+      on: { click: () => selectAccount(account.key) },
+    },
+    h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 32, height: 32 }),
+    h('span', {},
+      h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
+      h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' }),
+      h('span', { class: 'account-sub', text: profileLabel(account, instanceId) })),
+    h('span', { class: 'pill', 'data-status': account.status, text: STATUS_LABELS[account.status] ?? 'Inactive' })),
+    // Removal is recorded by the server, so it is offered only with it.
+    scope === 'all-profiles' && account.id && renderRemoval(account, removal))));
   document.querySelector('[data-accounts-empty]').hidden = accounts.status !== 'ready' || accounts.items.length > 0;
+  // Keep keyboard focus in the confirmation across re-renders.
+  if (removal?.status === 'confirming' && (hadConfirmFocus || document.activeElement === document.body || document.activeElement?.classList.contains('remove'))) {
+    list.querySelector('[data-confirm-remove]')?.focus();
+  }
 }
 
 function renderOrder(order, domain) {
@@ -260,9 +318,13 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
 
 addEventListener('pagehide', closeOrdersWindows);
 
+let shownKey = null;
 store.subscribe((state) => {
   renderAccounts(state);
   renderDetail(state);
+  // Clear the address when the selected account went away.
+  if (shownKey && !state.selectedKey) showAccountInAddress(null);
+  shownKey = state.selectedKey;
 });
 
 let unsubscribe = () => {};
