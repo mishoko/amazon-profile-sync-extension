@@ -16,7 +16,12 @@
 
   <div class="layout">
     <nav class="accounts" aria-labelledby="accounts-title">
-      <h1 class="accounts-title" id="accounts-title">Accounts in this browser</h1>
+      <h1 class="accounts-title" id="accounts-title">Accounts</h1>
+      <p class="hint notice" data-server-offline hidden>
+        Showing this browser profile only: the local Waybill server isn't
+        running. Start it with <code>node server/server.mjs</code> to see
+        the accounts of every profile.
+      </p>
       <ul class="account-list" data-account-list></ul>
       <p class="hint" data-accounts-empty hidden>
         No Amazon accounts found yet. Open Waybill, switch Amazon on and pick

@@ -1,19 +1,60 @@
-// Activity page: lists this browser profile's Amazon accounts (as found by the
-// popup) and, only when one is selected, reads that account's orders live from
-// Amazon's orders page (see lib/amazon-orders.js). Orders are kept in page memory only; they are never stored or sent.
+// Activity page: lists Amazon accounts and, only when one is selected, reads
+// that account's orders live from Amazon. Orders are kept in page memory only.
+//
+// With the local server running (server/server.mjs) the list holds the
+// accounts of every browser profile with Waybill, and a selected account's
+// orders are read by the profile that is signed into it. Without the server,
+// it falls back to this profile's accounts, read directly.
 import { createStore } from '../lib/store.js';
-import { loadAccounts, storeAccount } from '../lib/storage.js';
+import { loadAccounts, markNeedsSignIn } from '../lib/storage.js';
 import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
 import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
-
-const accountKey = ({ marketplace, domain }) => `${marketplace}${domain}`;
+import { getInstanceId, fetchAccounts, requestOrders } from '../lib/server.js';
 
 // Development builds only: activity.html?showOrdersWindow keeps the Amazon
 // window visible and open, to inspect its requests in DevTools.
 const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
 const orderReadOptions = { visible: isDevelopmentBuild && new URLSearchParams(location.search).has('showOrdersWindow') };
 
+// Where accounts and orders come from. Accounts share one shape:
+// { key, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, online }] }
+const allProfiles = {
+  scope: 'all-profiles',
+  accounts: fetchAccounts,
+  async orders(account, filter) {
+    const { instanceId, result } = await requestOrders(account.key, filter);
+    return { ...result, servedBy: instanceId };
+  },
+};
+
+const thisProfile = (instanceId) => ({
+  scope: 'this-profile',
+  async accounts() {
+    return (await loadAccounts())
+      .filter((account) => account.marketplace === 'amazon')
+      .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, online: true }] }))
+      .sort((a, b) => a.domain.localeCompare(b.domain));
+  },
+  async orders(account, filter) {
+    const result = filter
+      ? await readOrders(account.domain, filter, orderReadOptions)
+      : await readLatestOrders(account.domain, orderReadOptions);
+    if (result.status === 'needs-sign-in') await markNeedsSignIn(account.marketplace, account.domain);
+    return { ...result, servedBy: instanceId };
+  },
+});
+
+// The local server if it's running (after the background worker has
+// registered this profile), else this profile alone.
+async function chooseSource() {
+  const answer = await chrome.runtime.sendMessage({ type: 'connect' }).catch(() => null);
+  const instanceId = answer?.instanceId ?? await getInstanceId();
+  return { instanceId, source: answer?.connected ? allProfiles : thisProfile(instanceId) };
+}
+
 const initialState = {
+  scope: null,
+  instanceId: null,
   accounts: { status: 'loading', items: [] },
   selectedKey: null,
   // Per account key: { requestId, status: 'loading' | 'loaded' | 'needs-sign-in' | 'error',
@@ -24,7 +65,7 @@ const initialState = {
 function reducer(state, action) {
   switch (action.type) {
     case 'accounts-loaded':
-      return { ...state, accounts: { status: 'ready', items: action.accounts } };
+      return { ...state, scope: action.scope, instanceId: action.instanceId, accounts: { status: 'ready', items: action.accounts } };
     case 'account-selected':
       return { ...state, selectedKey: action.key };
     case 'orders-requested': {
@@ -44,7 +85,7 @@ function reducer(state, action) {
       const { result } = action;
       const next = result.status === 'needs-sign-in'
         ? { ...current, status: 'needs-sign-in', orders: [] }
-        : { ...current, status: 'loaded', filter: result.filter, filters: result.filters.length ? result.filters : current.filters, orders: result.orders, source: result.source };
+        : { ...current, status: 'loaded', filter: result.filter, filters: result.filters.length ? result.filters : current.filters, orders: result.orders, source: result.source, servedBy: result.servedBy };
       return { ...state, orders: { ...state.orders, [action.key]: next } };
     }
     case 'orders-failed': {
@@ -58,17 +99,15 @@ function reducer(state, action) {
 }
 
 const store = createStore(reducer, initialState);
+let source = null;
 let nextRequestId = 1;
 
 async function loadOrders(key, filter = null) {
-  const account = store.getState().accounts.items.find((item) => accountKey(item) === key);
+  const account = store.getState().accounts.items.find((item) => item.key === key);
   const requestId = nextRequestId++;
   store.dispatch({ type: 'orders-requested', key, requestId, filter });
   try {
-    const result = filter
-      ? await readOrders(account.domain, filter, orderReadOptions)
-      : await readLatestOrders(account.domain, orderReadOptions);
-    if (result.status === 'needs-sign-in') await storeAccount(account.marketplace, account.domain, { ...account, status: 'needs-sign-in' });
+    const result = await source.orders(account, filter);
     store.dispatch({ type: 'orders-received', key, requestId, result });
   } catch (error) {
     store.dispatch({ type: 'orders-failed', key, requestId, error: error.message });
@@ -96,20 +135,25 @@ function h(tag, props = {}, ...children) {
 
 const STATUS_LABELS = { active: 'Active', 'needs-sign-in': 'Sign in again' };
 
-function renderAccounts({ accounts, selectedKey }) {
+function profileLabel(account, instanceId) {
+  if (account.profiles.some((profile) => profile.instanceId === instanceId)) return 'This browser profile';
+  return account.profiles.some((profile) => profile.online) ? 'Another browser profile' : 'Another browser profile · not connected';
+}
+
+function renderAccounts({ scope, instanceId, accounts, selectedKey }) {
+  document.querySelector('#accounts-title').textContent = scope === 'all-profiles' ? 'Accounts in all browser profiles' : 'Accounts in this browser profile';
+  document.querySelector('[data-server-offline]').hidden = scope !== 'this-profile';
   const list = document.querySelector('[data-account-list]');
-  list.replaceChildren(...accounts.items.map((account) => {
-    const key = accountKey(account);
-    return h('li', {}, h('button', {
-      class: 'account', type: 'button', 'aria-current': String(key === selectedKey),
-      on: { click: () => selectAccount(key) },
-    },
-    h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 32, height: 32 }),
-    h('span', {},
-      h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
-      h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' })),
-    h('span', { class: 'pill', 'data-status': account.status, text: STATUS_LABELS[account.status] ?? 'Inactive' })));
-  }));
+  list.replaceChildren(...accounts.items.map((account) => h('li', {}, h('button', {
+    class: 'account', type: 'button', 'aria-current': String(account.key === selectedKey),
+    on: { click: () => selectAccount(account.key) },
+  },
+  h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 32, height: 32 }),
+  h('span', {},
+    h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
+    h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' }),
+    h('span', { class: 'account-sub', text: profileLabel(account, instanceId) })),
+  h('span', { class: 'pill', 'data-status': account.status, text: STATUS_LABELS[account.status] ?? 'Inactive' })))));
   document.querySelector('[data-accounts-empty]').hidden = accounts.status !== 'ready' || accounts.items.length > 0;
 }
 
@@ -131,19 +175,20 @@ function renderOrder(order, domain) {
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 // Where the shown orders came from: the Amazon page(s) read, when, and how long it took.
-function renderSource(entry, key) {
+function renderSource(entry, key, instanceId) {
   const { pages, readAt, durationMs } = entry.source;
   const shown = (url) => { const { host, pathname, search } = new URL(url); return `${host.replace(/^www\./, '')}${pathname}${search}`; };
+  const where = entry.servedBy === instanceId ? 'in this browser profile' : 'in another browser profile';
   return h('p', { class: 'source' },
-    `Read live from Amazon at ${timeFormat.format(readAt)} in ${(durationMs / 1000).toFixed(1)} s: `,
+    `Read live from Amazon ${where} at ${timeFormat.format(readAt)} in ${(durationMs / 1000).toFixed(1)} s: `,
     pages.map((url, index) => [index ? ', ' : '', h('a', { href: url, target: '_blank', rel: 'noreferrer', text: shown(url) })]),
     ' ',
     h('button', { class: 'refresh', type: 'button', on: { click: () => loadOrders(key, entry.filter) }, text: 'Refresh' }));
 }
 
-function renderDetail({ accounts, selectedKey, orders }) {
+function renderDetail({ instanceId, accounts, selectedKey, orders }) {
   const detail = document.querySelector('[data-detail]');
-  const account = accounts.items.find((item) => accountKey(item) === selectedKey);
+  const account = accounts.items.find((item) => item.key === selectedKey);
   if (!account) {
     detail.replaceChildren(h('p', { class: 'message', text: accounts.items.length ? 'Select an account to load its orders from Amazon.' : '' }));
     return;
@@ -169,7 +214,7 @@ function renderDetail({ accounts, selectedKey, orders }) {
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
         h('p', { class: 'detail-sub', text: account.email ?? account.name ?? '' })),
       period),
-    entry?.status === 'loaded' && entry.source && renderSource(entry, selectedKey),
+    entry?.status === 'loaded' && entry.source && renderSource(entry, selectedKey, instanceId),
     body);
 }
 
@@ -180,8 +225,12 @@ store.subscribe((state) => {
   renderDetail(state);
 });
 
-const accounts = (await loadAccounts())
-  .filter((account) => account.marketplace === 'amazon')
-  .sort((a, b) => a.domain.localeCompare(b.domain));
-store.dispatch({ type: 'accounts-loaded', accounts });
-if (accounts.length === 1) selectAccount(accountKey(accounts[0]));
+const chosen = await chooseSource();
+const { instanceId } = chosen;
+source = chosen.source;
+const accounts = await source.accounts().catch(async () => {
+  source = thisProfile(instanceId); // The server went away between connecting and listing.
+  return source.accounts();
+});
+store.dispatch({ type: 'accounts-loaded', scope: source.scope, instanceId, accounts });
+if (accounts.length === 1) selectAccount(accounts[0].key);

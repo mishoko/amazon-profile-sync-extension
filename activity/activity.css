@@ -98,6 +98,8 @@ select:focus-visible {
 .pill[data-status="active"] { background: #e6f6ec; color: var(--success); }
 
 .hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-muted); }
+.notice { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.notice code { font-size: 12px; }
 
 .detail {
   min-height: 320px;
