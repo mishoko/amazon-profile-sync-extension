@@ -210,19 +210,10 @@ select:focus-visible {
 .switch[aria-checked="true"]::after { transform: translateX(14px); }
 
 .mark {
-  display: grid;
-  place-items: center;
+  display: block;
   flex: none;
-  width: 32px;
-  height: 32px;
   border-radius: 8px;
-  color: #fff;
-  font-size: 20px;
-  font-weight: 700;
 }
-
-.mark-amazon { background: #232323; }
-.mark-aliexpress { background: #e8401c; font-size: 17px; }
 
 .card-title {
   display: flex;
