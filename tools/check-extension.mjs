@@ -52,6 +52,7 @@ for (const rel of pages) {
   if (/url\(\s*['"]?https?:/i.test(text)) fail(`${rel} loads a remote asset`);
 }
 
+// Extension files only: tools/ and server/ run in Node, not in the browser.
 const walk = (dir) => readdirSync(dir).flatMap((f) => {
   const p = join(dir, f);
   return statSync(p).isDirectory() ? walk(p) : [p];
@@ -59,7 +60,7 @@ const walk = (dir) => readdirSync(dir).flatMap((f) => {
 // The Amazon marketplace origin template (covered by host_permissions) and the
 // OpenID identifiers Amazon's sign-in URL carries as parameters (never fetched).
 const navigationTargets = [/https:\/\/www\.amazon\$\{domain\}/g, /http:\/\/specs\.openid\.net\/auth\/2\.0(?:\/identifier_select)?/g];
-for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !f.includes('/tools/') && !f.includes('/.git/'))) {
+for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !/\/(tools|server|\.git)\//.test(f))) {
   const text = navigationTargets.reduce((t, target) => t.replace(target, ''), readFileSync(file, 'utf8'));
   if (/https?:\/\//.test(text.replace(/xmlns=['"]http:\/\/www\.w3\.org\/2000\/svg['"]/g, ''))) {
     fail(`${file.slice(root.length + 1)} contains a URL`);
