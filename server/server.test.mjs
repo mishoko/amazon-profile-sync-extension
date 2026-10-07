@@ -56,6 +56,10 @@ test('rejects requests from other origins and hosts', async () => {
   await assert.rejects(connect(PROFILE_A, { origin: 'https://evil.example' }).opened);
 });
 
+test('answers health checks from the extension', async () => {
+  assert.equal((await api('/health')).status, 204);
+});
+
 test('aggregates account summaries from several profiles', async () => {
   const a = connect(PROFILE_A);
   const b = connect(PROFILE_B);

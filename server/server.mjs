@@ -153,6 +153,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
       });
       return response.end();
     }
+    if (request.method === 'GET' && pathname === '/health') return respond(response, 204, undefined, origin);
     if (request.method === 'GET' && pathname === '/accounts') {
       return respond(response, 200, { accounts: aggregatedAccounts() }, origin);
     }
