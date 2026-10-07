@@ -113,13 +113,37 @@ const describeElement = (element) => [
 ].filter(Boolean).join('');
 
 function outline(element, depth = 0, lines = []) {
-  if (lines.length > 400 || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'svg'].includes(element.tagName)) return lines;
+  if (lines.length > 1500 || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'svg'].includes(element.tagName)) return lines;
   const text = [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE)
     .map((node) => node.textContent.trim()).filter(Boolean).join(' ');
   const shape = !text ? '' : isOrderId(text) ? ' "<order-id>"' : ` "<${text.length} chars>"`;
   lines.push(`${'  '.repeat(depth)}${describeElement(element)}${shape}`);
   for (const child of element.children) outline(child, depth + 1, lines);
   return lines;
+}
+
+// A script's structure: object keys and code are kept; every string value is
+// replaced by its length, order numbers by a placeholder, other digits by 9.
+function redactScript(text) {
+  return text
+    .replace(/"((?:[^"\\]|\\.)*)"(\s*:)?|'((?:[^'\\]|\\.)*)'(\s*:)?|\d/g, (match, dq, dqKey, sq, sqKey) => {
+      if (dq === undefined && sq === undefined) return '9';
+      if (dqKey || sqKey) return match;
+      const value = dq ?? sq;
+      return isOrderId(value) && value.length < 40 ? '"<order-id>"' : `"<${value.length}>"`;
+    });
+}
+
+function scriptReport(script) {
+  const text = script.textContent;
+  const first = text.search(orderIdPattern);
+  const redacted = redactScript(text);
+  // Show the region around the first order number (positions shift slightly after redaction).
+  const start = Math.max(0, Math.round((first / text.length) * redacted.length) - 1500);
+  return [
+    `-- script ${[...script.attributes].map((a) => `${a.name}=${a.value.slice(0, 40)}`).join(' ')} length ${text.length}, order numbers ${new Set(text.match(orderIdPattern)).size}`,
+    redacted.slice(start, start + 4000),
+  ].join('\n');
 }
 
 async function layoutReport(domain, year) {
@@ -138,8 +162,17 @@ async function layoutReport(domain, year) {
     && new Set(container.parentElement.textContent.match(orderIdPattern)).size <= 1) {
     container = container.parentElement;
   }
+  const scripts = [...doc.querySelectorAll('script')].filter((script) => isOrderId(script.textContent));
+  const ordersArea = doc.querySelector('.js-yo-main-content, .your-orders-content-container');
   return [
     `domain ${domain}, year ${year}, status ${response.status}, final path ${new URL(response.url).pathname}`,
+    '', '== selector counts',
+    ...['.order-card', '.js-order-card', '.a-box-group', '.yohtmlc-order-id', '[data-component]', 'template', '.a-pagination']
+      .map((selector) => `${selector}: ${doc.querySelectorAll(selector).length}`),
+    '', '== scripts mentioning order numbers',
+    ...scripts.map(scriptReport),
+    '', '== orders area',
+    ...(ordersArea ? outline(ordersArea) : ['(none)']),
     '', '== selects',
     ...[...doc.querySelectorAll('select')].map((select) => `${describeElement(select)}: ${[...select.options].map((o) => o.value).join(', ')}`),
     '', '== order ID elements (ancestry)',
