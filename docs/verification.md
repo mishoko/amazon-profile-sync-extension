@@ -129,6 +129,21 @@ server, synthetic Amazon pages per profile, and no outside network:
 | Server stopped, Activity reloaded | "Accounts in this browser profile" with the fallback notice; A's accounts still load |
 | Extension errors with the server down (developer mode on) | None |
 
+Live updates (same setup, A's Activity left open, no reload):
+
+| Check | Result |
+| --- | --- |
+| B opens Amazon's sign-out page | B's account disappears from A's list |
+| B finishes a sign-in (sign-in page, then an Amazon page) | B's account reappears |
+| Server stopped / restarted | A falls back to "this browser profile", then returns to all profiles by itself |
+| No server: an account saved or removed in this profile | List follows |
+| "Fetching live from Amazon…" while a period reloads | Shown; previous orders stay, dimmed; no stray "false" |
+
+Tests run on a copy of the extension pointed at port 4499, never at 4417,
+so they can't reach a server or browser profile in real use. In that copy
+the offscreen page's Amazon requests are answered by a stand-in, because
+Playwright can't intercept requests from offscreen documents.
+
 Not yet tested on real Amazon across two real profiles.
 
 To watch a live read, open `activity/activity.html?showOrdersWindow` (development
