@@ -1,0 +1,11 @@
+.probe { display: flex; gap: 16px; align-items: end; margin-bottom: 16px; font-size: 13px; }
+.probe label { display: flex; flex-direction: column; gap: 4px; }
+.probe input { width: 80px; }
+.result {
+  max-width: 900px;
+  padding: 16px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

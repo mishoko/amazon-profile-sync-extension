@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Waybill: Amazon session probe (development)</title>
+  <link rel="stylesheet" href="preview.css">
+  <link rel="stylesheet" href="amazon-probe.css">
+  <script type="module" src="amazon-probe.js"></script>
+</head>
+<body>
+  <h1>Amazon session probe — development only</h1>
+  <p>
+    Checks whether this profile's Amazon sign-in reaches the extension, and what
+    account identifiers Amazon's pages expose. Personal values are masked.
+    Nothing is sent anywhere or stored.
+  </p>
+  <form class="probe" data-probe>
+    <label>Marketplace
+      <select name="domain">
+        <option>.com</option>
+        <option>.ca</option>
+        <option>.co.uk</option>
+        <option>.com.au</option>
+        <option>.de</option>
+        <option>.es</option>
+        <option>.fr</option>
+        <option>.ie</option>
+        <option>.it</option>
+        <option>.ae</option>
+        <option>.sa</option>
+      </select>
+    </label>
+    <label>Order year <input name="year" type="number" min="1996" max="2100" value="2024"></label>
+    <button type="submit">Check</button>
+  </form>
+  <pre class="result" data-result aria-live="polite"></pre>
+</body>
+</html>
