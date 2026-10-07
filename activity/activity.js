@@ -1,9 +1,10 @@
 // Activity page: lists this browser profile's Amazon accounts (as found by the
 // popup) and, only when one is selected, reads that account's orders live from
-// Amazon. Orders are kept in page memory only; they are never stored or sent.
+// Amazon's orders page (see lib/amazon-orders.js). Orders are kept in page memory only; they are never stored or sent.
 import { createStore } from '../lib/store.js';
 import { loadAccounts, storeAccount } from '../lib/storage.js';
-import { readOrders, readLatestOrders, ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
+import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
+import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
 
 const accountKey = ({ marketplace, domain }) => `${marketplace}${domain}`;
 
@@ -150,6 +151,8 @@ function renderDetail({ accounts, selectedKey, orders }) {
       period),
     body);
 }
+
+addEventListener('pagehide', closeOrdersWindows);
 
 store.subscribe((state) => {
   renderAccounts(state);

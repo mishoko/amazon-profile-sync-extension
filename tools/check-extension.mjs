@@ -13,7 +13,8 @@ for (const key of ['optional_permissions', 'optional_host_permissions', 'backgro
   if (key in manifest) fail(`unexpected ${key}: not needed yet`);
 }
 // storage: marketplace settings and this profile's Amazon account summaries.
-const allowedPermissions = ['storage'];
+// scripting: read decrypted order cards from Amazon's orders page.
+const allowedPermissions = ['storage', 'scripting'];
 for (const permission of manifest.permissions ?? []) {
   if (!allowedPermissions.includes(permission)) fail(`unexpected permission ${permission}`);
 }
