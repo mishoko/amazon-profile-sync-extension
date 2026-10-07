@@ -112,9 +112,18 @@ and button edges match to the pixel; the chevron is within 1px.
 
 Run the local server, then reload Waybill in each profile:
 
-    docker compose up -d --build   # in a container, published on 127.0.0.1:4417 only
-    node server/server.mjs         # or directly with Node 22
-    node --test                    # server tests (built-in runner)
+    cp .env.example .env           # once; choose POSTGRES_PASSWORD
+    docker compose up -d --build   # server + Postgres; server on 127.0.0.1:4417 only
+    node server/server.mjs         # or directly with Node 22 (in-memory store)
+    node --test                    # server and store tests, in-memory store
+    docker compose -p waybill-test --profile test run --rm tests   # same tests + Postgres
+
+Postgres keeps browser profiles, the accounts they report (each with a lasting
+numeric ID) and which profile holds which account; never orders. It is not
+published outside Compose (port 5432 is unreachable from the host). Migrations
+in server/migrations are applied on start. The pg driver is installed only in
+the image: Chrome won't load an unpacked extension folder containing npm's
+"_"-prefixed files.
 
 The container runs as a non-root user with a read-only filesystem, no
 capabilities, and no npm dependencies. Checked: the server answers on
@@ -145,6 +154,11 @@ Live updates (same setup, A's Activity left open, no reload):
 | Server stopped / restarted | A falls back to "this browser profile", then returns to all profiles by itself |
 | No server: an account saved or removed in this profile | List follows |
 | "Fetching live from Amazon…" while a period reloads | Shown; previous orders stay, dimmed; no stray "false" |
+
+Against server + Postgres in Docker, the two-profile checks pass as well,
+and right after a server restart the account list (IDs 1-3) comes back from
+the database, marked offline, before profiles reconnect. Bob's account keeps
+its ID across his sign-out and sign-in.
 
 Tests run on a copy of the extension pointed at port 4499, never at 4417,
 so they can't reach a server or browser profile in real use. In that copy

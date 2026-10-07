@@ -1,3 +1,6 @@
 *
-!server/server.mjs
-!server/websocket.mjs
+!server/package.json
+!server/package-lock.json
+!server/*.mjs
+!server/store/*.mjs
+!server/migrations/*.sql

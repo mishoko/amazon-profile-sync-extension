@@ -42,6 +42,9 @@ function connect(instanceId, { origin = ORIGIN, path = `/connect?instance=${inst
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+const accounts = async () => (await (await api('/accounts')).json()).accounts;
+const idOf = async (domain, customerId) => (await accounts()).find((account) => account.domain === domain && account.customerId === customerId).id;
+const ordersOf = (id, body = '{}') => api(`/accounts/${id}/orders`, { method: 'POST', body });
 
 test('rejects requests from other origins and hosts', async () => {
   assert.equal((await api('/accounts', { headers: { origin: 'https://evil.example' } })).status, 403);
@@ -75,17 +78,20 @@ test('aggregates account summaries from several profiles', async () => {
   ] });
   await settle();
 
-  const { accounts } = await (await api('/accounts')).json();
-  assert.deepEqual(accounts.map((account) => account.key), [
-    'amazon.co.uk:A1AAAAAAAAAAAA', 'amazon.com:A1AAAAAAAAAAAA', 'amazon.com:A2BBBBBBBBBBBB', 'amazon.de:email:bob@example.com',
+  const list = await accounts();
+  assert.deepEqual(list.map(({ domain, customerId, email }) => `${domain} ${customerId ?? email}`), [
+    '.com A1AAAAAAAAAAAA', '.co.uk A1AAAAAAAAAAAA', '.com A2BBBBBBBBBBBB', '.de bob@example.com',
   ]);
-  assert.deepEqual(accounts[2].profiles, [{ instanceId: PROFILE_B, online: true, status: 'active' }]);
-  assert.equal('orders' in accounts[1], false);
+  assert.ok(list.every((account) => Number.isInteger(account.id)));
+  const bob = list.find((account) => account.customerId === 'A2BBBBBBBBBBBB');
+  assert.deepEqual(bob.profiles, [{ instanceId: PROFILE_B, online: true, status: 'active' }]);
+  assert.equal(bob.status, 'active');
+  assert.equal('orders' in list[0], false);
 
   b.close();
   await settle();
-  const after = await (await api('/accounts')).json();
-  assert.equal(after.accounts.find((account) => account.key === 'amazon.com:A2BBBBBBBBBBBB').profiles[0].online, false);
+  const after = await accounts();
+  assert.equal(after.find((account) => account.id === bob.id).profiles[0].online, false);
   a.close();
 });
 
@@ -97,7 +103,8 @@ test('forwards an order request to the profile that holds the account', async ()
   b.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', status: 'active' }] });
   await settle();
 
-  const response = api(`/accounts/${encodeURIComponent('amazon.com:A2BBBBBBBBBBBB')}/orders`, { method: 'POST', body: JSON.stringify({ filter: 'year-2023' }) });
+  const bobId = await idOf('.com', 'A2BBBBBBBBBBBB');
+  const response = ordersOf(bobId, JSON.stringify({ filter: 'year-2023' }));
   const request = await b.next();
   assert.equal(request.type, 'read-orders');
   assert.equal(request.domain, '.com');
@@ -109,7 +116,7 @@ test('forwards an order request to the profile that holds the account', async ()
   assert.deepEqual(await answer.json(), { instanceId: PROFILE_B, result: { status: 'active', orders: [{ id: '113-1111111-2222222' }] } });
 
   // Another profile cannot answer a request that wasn't sent to it.
-  const second = api(`/accounts/${encodeURIComponent('amazon.com:A2BBBBBBBBBBBB')}/orders`, { method: 'POST', body: '{}' });
+  const second = ordersOf(bobId);
   const secondRequest = await b.next();
   a.send({ type: 'orders-result', requestId: secondRequest.requestId, result: { status: 'active', orders: [] } });
   b.send({ type: 'orders-result', requestId: secondRequest.requestId, error: 'Amazon took too long to load' });
@@ -119,9 +126,16 @@ test('forwards an order request to the profile that holds the account', async ()
   b.close();
 });
 
-test('reports accounts that no connected profile can serve', async () => {
-  const response = await api(`/accounts/${encodeURIComponent('amazon.fr:A9')}/orders`, { method: 'POST', body: '{}' });
-  assert.equal(response.status, 409);
+test('reports unknown accounts and accounts no connected profile can serve', async () => {
+  assert.equal((await ordersOf(999999)).status, 404);
+  const a = connect(PROFILE_A);
+  await a.opened;
+  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.fr', customerId: 'A1FFFFFFFFFFFF', status: 'active' }] });
+  await settle();
+  const id = await idOf('.fr', 'A1FFFFFFFFFFFF');
+  a.close();
+  await settle();
+  assert.equal((await ordersOf(id)).status, 409);
 });
 
 test('fails pending requests when the profile disconnects', async () => {
@@ -129,7 +143,7 @@ test('fails pending requests when the profile disconnects', async () => {
   await a.opened;
   a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.ca', customerId: 'A1CCCCCCCCCCCC', status: 'active' }] });
   await settle();
-  const response = api(`/accounts/${encodeURIComponent('amazon.ca:A1CCCCCCCCCCCC')}/orders`, { method: 'POST', body: '{}' });
+  const response = ordersOf(await idOf('.ca', 'A1CCCCCCCCCCCC'));
   await a.next();
   a.close();
   assert.equal((await response).status, 502);
@@ -145,16 +159,17 @@ test('pushes the account list to watchers whenever it changes', async () => {
   await watcher.next(); // profile connected
   a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
   const added = await watcher.next();
-  assert.ok(added.accounts.some((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD' && account.profiles[0].online));
+  const italy = added.accounts.find((account) => account.domain === '.it');
+  assert.ok(italy?.profiles[0].online);
 
   a.send({ type: 'accounts', accounts: [] }); // signed out
   const removed = await watcher.next();
-  assert.ok(!removed.accounts.some((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD'));
+  assert.ok(!removed.accounts.some((account) => account.id === italy.id));
 
   a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
   await watcher.next();
   a.close();
   const offline = await watcher.next();
-  assert.equal(offline.accounts.find((account) => account.key === 'amazon.it:A1DDDDDDDDDDDD').profiles[0].online, false);
+  assert.equal(offline.accounts.find((account) => account.id === italy.id).profiles[0].online, false);
   watcher.close();
 });

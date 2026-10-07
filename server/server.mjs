@@ -7,17 +7,20 @@
 // - Open Activity pages subscribe over a WebSocket (/watch) and receive the
 //   full account list again whenever any profile's accounts or connection
 //   change.
-// - Orders are lazy: POST /accounts/<key>/orders forwards a read request to a
+// - Orders are lazy: POST /accounts/<id>/orders forwards a read request to a
 //   connected profile that holds the account, and returns its answer. Orders
 //   are passed through and never stored.
-// - State is in memory; profiles re-register when they reconnect.
+// - Profiles and accounts are kept in a store: Postgres when DATABASE_URL is
+//   set (compose.yaml), otherwise in memory. Each account gets a lasting
+//   numeric ID. Which profiles are connected is known only while they are.
 // - Listens on 127.0.0.1 only and accepts only Waybill's extension origin(s).
 //
-// Run: node server/server.mjs, or docker compose up
-// (WAYBILL_PORT, WAYBILL_HOST, WAYBILL_EXTENSION_IDS to override)
+// Run: docker compose up, or node server/server.mjs (in-memory store)
+// (WAYBILL_PORT, WAYBILL_HOST, WAYBILL_EXTENSION_IDS, DATABASE_URL)
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { acceptWebSocket } from './websocket.mjs';
+import { createMemoryStore } from './store/memory.mjs';
 
 export const DEFAULT_PORT = 4417;
 const DEFAULT_EXTENSION_IDS = ['iibmbonngmdgckjdjpilmapdgldhkeog'];
@@ -26,9 +29,6 @@ const MAX_BODY_BYTES = 100_000;
 const INSTANCE_ID = /^[0-9a-f-]{36}$/;
 const STATUSES = new Set(['active', 'needs-sign-in']);
 const STATUS_RANK = { active: 2, 'needs-sign-in': 1 };
-
-export const accountKey = ({ marketplace, domain, customerId, email }) =>
-  `${marketplace}${domain}:${customerId ?? `email:${email}`}`;
 
 const text = (value, max = 200) => (typeof value === 'string' && value.length <= max ? value : null);
 
@@ -47,52 +47,49 @@ function accountSummary(raw) {
   return valid ? account : null;
 }
 
-export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {}) {
+export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, store = createMemoryStore() } = {}) {
   const allowedOrigins = new Set(extensionIds.map((id) => `chrome-extension://${id}`));
-  // instanceId -> { accounts: Map<key, summary>, connection | null }
-  const instances = new Map();
+  // instanceId -> the profile's open connection
+  const connections = new Map();
   // requestId -> { instanceId, resolve, timer }
   const pendingOrders = new Map();
   // Activity pages watching the account list.
   const watchers = new Set();
   let allowedHosts = new Set();
 
-  function instance(id) {
-    if (!instances.has(id)) instances.set(id, { accounts: new Map(), connection: null });
-    return instances.get(id);
+  // Stored accounts plus who holds them right now. The account's status is
+  // the best status among the profiles holding it.
+  const withConnections = (account) => {
+    const profiles = account.holders.map(({ profileId, status }) => ({ instanceId: profileId, online: connections.has(profileId), status }));
+    const best = profiles.reduce((top, profile) => (STATUS_RANK[profile.status] > STATUS_RANK[top] ? profile.status : top), 'needs-sign-in');
+    const { holders, ...fields } = account;
+    return { ...fields, status: best, profiles };
+  };
+
+  async function aggregatedAccounts() {
+    return (await store.listAccounts()).map(withConnections);
   }
 
-  function aggregatedAccounts() {
-    const byKey = new Map();
-    for (const [instanceId, { accounts, connection }] of instances) {
-      for (const [key, account] of accounts) {
-        const entry = byKey.get(key) ?? { key, ...account, profiles: [] };
-        if (STATUS_RANK[account.status] > STATUS_RANK[entry.status]) Object.assign(entry, account);
-        entry.profiles.push({ instanceId, online: connection !== null, status: account.status });
-        byKey.set(key, entry);
-      }
-    }
-    return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
-  }
-
-  function broadcastAccounts() {
-    const message = { type: 'accounts', accounts: aggregatedAccounts() };
+  async function broadcastAccounts() {
+    if (!watchers.size) return;
+    const message = { type: 'accounts', accounts: await aggregatedAccounts() };
     for (const watcher of watchers) watcher.send(message);
   }
 
-  function requestOrders(key, filter) {
-    const candidates = [...instances].filter(([, { accounts, connection }]) => connection && accounts.has(key))
-      .sort(([, a], [, b]) => STATUS_RANK[b.accounts.get(key).status] - STATUS_RANK[a.accounts.get(key).status]);
-    if (!candidates.length) return Promise.resolve({ status: 409, body: { error: 'No connected browser profile has this account signed in.' } });
-    const [instanceId, { accounts, connection }] = candidates[0];
+  async function requestOrders(accountId, filter) {
+    const account = await store.getAccount(accountId);
+    if (!account) return { status: 404, body: { error: 'No such account.' } };
+    const holder = withConnections(account).profiles.filter((profile) => profile.online)
+      .sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status])[0];
+    if (!holder) return { status: 409, body: { error: 'No connected browser profile has this account signed in.' } };
     const requestId = randomUUID();
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         pendingOrders.delete(requestId);
         resolve({ status: 504, body: { error: 'The browser profile did not answer in time.' } });
       }, ORDER_REQUEST_TIMEOUT_MS);
-      pendingOrders.set(requestId, { instanceId, resolve, timer });
-      connection.send({ type: 'read-orders', requestId, domain: accounts.get(key).domain, filter: filter ?? null });
+      pendingOrders.set(requestId, { instanceId: holder.instanceId, resolve, timer });
+      connections.get(holder.instanceId).send({ type: 'read-orders', requestId, domain: account.domain, filter: filter ?? null });
     });
   }
 
@@ -104,24 +101,26 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     pending.resolve(error ? { status: 502, body: { error: String(error).slice(0, 300) } } : { status: 200, body: { instanceId, result } });
   }
 
+  const logStoreError = (error) => console.error(`Waybill store: ${error.message}`);
+
   function handleConnection(instanceId, connection) {
-    const entry = instance(instanceId);
-    entry.connection?.close();
-    entry.connection = connection;
-    broadcastAccounts();
+    connections.get(instanceId)?.close();
+    connections.set(instanceId, connection);
+    // Store writes for one profile run in the order its messages arrived.
+    let writes = store.touchProfile(instanceId).then(broadcastAccounts).catch(logStoreError);
     return {
       onMessage(message) {
         if (message?.type === 'accounts' && Array.isArray(message.accounts)) {
-          entry.accounts = new Map(message.accounts.map(accountSummary).filter(Boolean).map((account) => [accountKey(account), account]));
-          broadcastAccounts();
+          const accounts = message.accounts.map(accountSummary).filter(Boolean);
+          writes = writes.then(() => store.replaceProfileAccounts(instanceId, accounts)).then(broadcastAccounts).catch(logStoreError);
         } else if (message?.type === 'orders-result') {
           settleOrders(instanceId, message);
         }
       },
       onClose() {
-        if (entry.connection !== connection) return;
-        entry.connection = null;
-        broadcastAccounts();
+        if (connections.get(instanceId) !== connection) return;
+        connections.delete(instanceId);
+        broadcastAccounts().catch(logStoreError);
         for (const [requestId, pending] of pendingOrders) {
           if (pending.instanceId === instanceId) settleOrders(instanceId, { requestId, error: 'The browser profile disconnected.' });
         }
@@ -152,7 +151,14 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     });
   }
 
-  const server = createServer(async (request, response) => {
+  const server = createServer((request, response) => {
+    handleRequest(request, response).catch((error) => {
+      logStoreError(error);
+      if (!response.headersSent) respond(response, 503, { error: 'The Waybill server could not reach its database.' }, request.headers.origin);
+    });
+  });
+
+  async function handleRequest(request, response) {
     if (!isAllowed(request)) return respond(response, 403, { error: 'Forbidden' });
     const { origin } = request.headers;
     const { pathname } = new URL(request.url, 'http://localhost');
@@ -169,22 +175,22 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
     }
     if (request.method === 'GET' && pathname === '/health') return respond(response, 204, undefined, origin);
     if (request.method === 'GET' && pathname === '/accounts') {
-      return respond(response, 200, { accounts: aggregatedAccounts() }, origin);
+      return respond(response, 200, { accounts: await aggregatedAccounts() }, origin);
     }
-    const ordersMatch = pathname.match(/^\/accounts\/([^/]+)\/orders$/);
+    const ordersMatch = pathname.match(/^\/accounts\/(\d{1,15})\/orders$/);
     if (request.method === 'POST' && ordersMatch) {
       let body;
       try { body = await readJson(request); } catch { return respond(response, 400, { error: 'Invalid JSON' }, origin); }
       const filter = typeof body.filter === 'string' && /^[a-z0-9-]{1,20}$/.test(body.filter) ? body.filter : null;
-      const { status, body: answer } = await requestOrders(decodeURIComponent(ordersMatch[1]), filter);
+      const { status, body: answer } = await requestOrders(Number(ordersMatch[1]), filter);
       return respond(response, status, answer, origin);
     }
     return respond(response, 404, { error: 'Not found' }, origin);
-  });
+  }
 
   function handleWatcher(connection) {
     watchers.add(connection);
-    connection.send({ type: 'accounts', accounts: aggregatedAccounts() });
+    aggregatedAccounts().then((accounts) => connection.send({ type: 'accounts', accounts })).catch(logStoreError);
     return { onMessage() {}, onClose: () => watchers.delete(connection) };
   }
 
@@ -215,10 +221,11 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
         resolve(actual);
       }));
     },
-    close() {
-      for (const { connection } of instances.values()) connection?.close();
+    async close() {
+      for (const connection of connections.values()) connection.close();
       for (const watcher of watchers) watcher.close();
-      return new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => server.close(resolve));
+      await store.close();
     },
   };
 }
@@ -226,7 +233,11 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS } = {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const extensionIds = process.env.WAYBILL_EXTENSION_IDS?.split(',').map((id) => id.trim()).filter(Boolean);
   const host = process.env.WAYBILL_HOST || '127.0.0.1';
-  const waybill = createWaybillServer({ extensionIds });
+  const store = process.env.DATABASE_URL
+    ? await (await import('./store/postgres.mjs')).createPostgresStore(process.env.DATABASE_URL)
+    : createMemoryStore();
+  console.log(process.env.DATABASE_URL ? 'Store: Postgres' : 'Store: in memory (set DATABASE_URL for Postgres)');
+  const waybill = createWaybillServer({ extensionIds, store });
   const port = await waybill.listen(Number(process.env.WAYBILL_PORT) || DEFAULT_PORT, host);
   console.log(`Waybill local server listening on ${host}:${port}`);
   for (const signal of ['SIGINT', 'SIGTERM']) {

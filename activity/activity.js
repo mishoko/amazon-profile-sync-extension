@@ -22,12 +22,16 @@ const SERVER_RETRY_MS = 5000;
 // Where accounts and orders come from. subscribe(onAccounts, onLost) delivers
 // the account list now and after every change, and returns an unsubscribe
 // function. Accounts share one shape:
-// { key, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, online }] }
+// { key, id?, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, online }] }
+// `id` is the server's lasting account ID; it exists only with the server.
 const allProfiles = {
   scope: 'all-profiles',
-  subscribe: watchAccounts,
+  subscribe: (onAccounts, onLost) => watchAccounts(
+    (accounts) => onAccounts(accounts.map((account) => ({ ...account, key: `id:${account.id}` }))),
+    onLost,
+  ),
   async orders(account, filter) {
-    const { instanceId, result } = await requestOrders(account.key, filter);
+    const { instanceId, result } = await requestOrders(account.id, filter);
     return { ...result, servedBy: instanceId };
   },
 };

@@ -1,16 +1,49 @@
-# docker compose up -d   → the local Waybill server on 127.0.0.1:4417
-# The port is published on the loopback interface only, never the network.
-# WAYBILL_PORT changes it (the server and the published port must match,
-# because the server checks the Host header the browser sends).
+# docker compose up -d --build
+#   server: the local Waybill server, published on 127.0.0.1:4417 only
+#   db:     Postgres for profiles and accounts, reachable only by the server
+# POSTGRES_PASSWORD must be set, e.g. in .env (see .env.example).
+# WAYBILL_PORT changes the port (the server and the published port must
+# match, because the server checks the Host header the browser sends).
 services:
   server:
-    build: .
+    build: { context: ., target: runtime }
     environment:
       WAYBILL_PORT: ${WAYBILL_PORT:-4417}
       WAYBILL_EXTENSION_IDS: ${WAYBILL_EXTENSION_IDS:-iibmbonngmdgckjdjpilmapdgldhkeog}
+      DATABASE_URL: postgres://waybill:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/waybill
     ports:
       - "127.0.0.1:${WAYBILL_PORT:-4417}:${WAYBILL_PORT:-4417}"
+    depends_on:
+      db: { condition: service_healthy }
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: waybill
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: waybill
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waybill -d waybill"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Server and store tests against this project's database (it is wiped).
+  # Use a separate project: docker compose -p waybill-test --profile test run --rm tests
+  tests:
+    profiles: [test]
+    build: { context: ., target: test }
+    environment:
+      DATABASE_URL: postgres://waybill:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/waybill
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  db-data:
