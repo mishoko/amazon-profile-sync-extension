@@ -120,7 +120,7 @@ Run the local server, then reload Waybill in each profile:
 
 Postgres keeps browser profiles, the accounts they report (each with a lasting
 numeric ID) and which profile holds which account; never orders. It is not
-published outside Compose (port 5432 is unreachable from the host). Migrations
+published on the network: only on 127.0.0.1:5433, for local inspection. Migrations
 in server/migrations are applied on start. The pg driver is installed only in
 the image: Chrome won't load an unpacked extension folder containing npm's
 "_"-prefixed files.
