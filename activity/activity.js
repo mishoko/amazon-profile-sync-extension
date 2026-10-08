@@ -7,7 +7,7 @@
 // signed into it. Without the server it falls back to this profile's saved
 // accounts (updated as they change) and keeps checking for the server.
 import { createStore } from '../lib/store.js';
-import { loadAccounts, markNeedsSignIn } from '../lib/storage.js';
+import { loadTrackedAccounts, affectsTrackedAccounts, loadSessionName, isSessionChange, markNeedsSignIn } from '../lib/storage.js';
 import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
 import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
 import { getInstanceId, watchAccounts, requestOrders, removeAccount } from '../lib/server.js';
@@ -40,12 +40,11 @@ const allProfiles = {
 const thisProfile = (instanceId) => ({
   scope: 'this-profile',
   subscribe(onAccounts) {
-    const load = async () => onAccounts((await loadAccounts())
-      .filter((account) => account.marketplace === 'amazon')
+    const load = async () => onAccounts((await loadTrackedAccounts())
       .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, status: account.status }] }))
       .sort((a, b) => a.domain.localeCompare(b.domain)));
     const onChanged = (changes, area) => {
-      if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) load();
+      if (area === 'local' && affectsTrackedAccounts(changes)) load();
     };
     chrome.storage.onChanged.addListener(onChanged);
     load();
@@ -355,11 +354,22 @@ function waitForServer(instanceId) {
   }, SERVER_RETRY_MS);
 }
 
-const answer = await connectToServer();
-const instanceId = answer?.instanceId ?? await getInstanceId();
-if (answer?.connected) {
-  use(allProfiles, instanceId);
+// Signing in to or out of Waybill (in the popup) restarts this page, so it
+// always shows exactly what the current session may see.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && isSessionChange(changes)) location.reload();
+});
+
+if (!(await loadSessionName())) {
+  document.querySelector('[data-signed-out]').hidden = false;
+  document.querySelector('.layout').hidden = true;
 } else {
-  use(thisProfile(instanceId), instanceId);
-  waitForServer(instanceId);
+  const answer = await connectToServer();
+  const instanceId = answer?.instanceId ?? await getInstanceId();
+  if (answer?.connected) {
+    use(allProfiles, instanceId);
+  } else {
+    use(thisProfile(instanceId), instanceId);
+    waitForServer(instanceId);
+  }
 }

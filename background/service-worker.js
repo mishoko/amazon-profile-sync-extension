@@ -5,8 +5,9 @@
 //   server isn't running; it retries every minute);
 // - while Amazon is switched on, follows the user's Amazon sign-ins and
 //   sign-outs so the account list stays current without opening the popup.
+// Nothing is tracked or shared while signed out of Waybill or with Amazon off.
 import { getInstanceId, connectUrl, isServerRunning } from '../lib/server.js';
-import { loadAccounts, loadAccount, storeAccount, loadMarketplaces, markNeedsSignIn } from '../lib/storage.js';
+import { loadTrackedAccounts, affectsTrackedAccounts, isAmazonTracked, loadAccount, storeAccount, markNeedsSignIn } from '../lib/storage.js';
 import { AMAZON_DOMAINS } from '../lib/amazon.js';
 import { readOrders, readLatestOrders, isOrdersWindow, closeAbandonedOrdersWindows } from '../lib/amazon-orders.js';
 
@@ -18,9 +19,10 @@ let connected = null; // Promise for the current connection attempt.
 
 const send = (message) => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message));
 
+// Reports exactly the tracked accounts (signed in to Waybill, Amazon on);
+// otherwise an empty list, which removes this profile's accounts everywhere.
 async function sendAccounts() {
-  const accounts = (await loadAccounts())
-    .filter((account) => account.marketplace === 'amazon')
+  const accounts = (await loadTrackedAccounts())
     .map(({ marketplace, domain, customerId = null, name = null, email = null, status, signedInAt = null }) => ({ marketplace, domain, customerId, name, email, status, signedInAt }));
   send({ type: 'accounts', accounts });
 }
@@ -91,7 +93,7 @@ async function readAccountOffscreen(domain, known) {
 // `afterSignIn`: the user just finished signing in on this marketplace.
 async function checkAccount(domain, { afterSignIn = false } = {}) {
   pendingChecks.delete(domain);
-  if (!(await loadMarketplaces()).amazon.enabled) return;
+  if (!(await isAmazonTracked())) return;
   lastChecked.set(domain, Date.now());
   try {
     const account = await readAccountOffscreen(domain, await loadAccount('amazon', domain));
@@ -106,7 +108,7 @@ async function followAmazonPage(tab, change) {
   const url = new URL(change.url ?? tab.url);
   const domain = amazonDomainOf(url);
   if (!domain || await isOrdersWindow(tab.windowId)) return;
-  if (!(await loadMarketplaces()).amazon.enabled) return;
+  if (!(await isAmazonTracked())) return;
 
   if (change.url && url.pathname.includes('/sign-out')) {
     clearTimeout(pendingChecks.get(domain)?.timer);
@@ -135,7 +137,7 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
 
 // --- Server registration -----------------------------------------------------
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) sendAccounts();
+  if (area === 'local' && affectsTrackedAccounts(changes)) sendAccounts();
 });
 
 // Every minute: reconnect if needed, and close orders windows left behind by

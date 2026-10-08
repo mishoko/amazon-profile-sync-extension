@@ -1,4 +1,5 @@
 import { mountMarketplaces } from './marketplaces.js';
+import { loadSessionName, saveSessionName } from '../lib/storage.js';
 
 // There is no account service yet, so a real session never exists and store
 // builds always show the signed-out view. Unpacked development builds simulate
@@ -6,21 +7,12 @@ import { mountMarketplaces } from './marketplaces.js';
 // signed-in view until "Log out". popup.html?preview=<name> forces a fixture.
 const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
 const previewName = new URLSearchParams(location.search).get('preview');
-const SIMULATED_SESSION_KEY = 'waybill.simulatedSession';
 const SIMULATED_SIGN_IN_MS = 2500;
 
-function storedPreviewName() {
-  try { return localStorage.getItem(SIMULATED_SESSION_KEY); } catch { return null; }
-}
-
-function storePreviewName(name) {
-  try {
-    if (name) localStorage.setItem(SIMULATED_SESSION_KEY, name);
-    else localStorage.removeItem(SIMULATED_SESSION_KEY);
-  } catch {}
-}
-
-async function loadSession(name = previewName ?? storedPreviewName()) {
+// The session lives in chrome.storage (lib/storage.js), so the background
+// worker and the Activity page follow sign-in and sign-out too.
+async function loadSession(requested = null) {
+  const name = requested ?? previewName ?? await loadSessionName();
   if (!isDevelopmentBuild || !name) return null;
   const { previewSessions } = await import('../dev/preview-sessions.js');
   return previewSessions[name] ?? null;
@@ -31,7 +23,7 @@ async function simulateSignIn(button) {
   button.setAttribute('aria-disabled', 'true');
   button.querySelector('[data-log-in-label]').textContent = 'Logging in…';
   await new Promise((resolve) => setTimeout(resolve, SIMULATED_SIGN_IN_MS));
-  storePreviewName('signed-in');
+  await saveSessionName('signed-in');
   renderSignedIn(await loadSession('signed-in'));
   button.removeAttribute('aria-busy');
   button.removeAttribute('aria-disabled');
@@ -71,7 +63,7 @@ document.addEventListener('click', (event) => {
   }
 
   if (event.target.closest('[data-log-out]')) {
-    storePreviewName(null);
+    saveSessionName(null);
     renderSignedOut();
   }
 });
