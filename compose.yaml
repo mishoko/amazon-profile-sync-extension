@@ -2,9 +2,11 @@
 #   server: the local Waybill server, published on 127.0.0.1:4417 only
 #   db:     Postgres for profiles and accounts; also published on
 #           127.0.0.1:5433 (loopback only) for inspecting it with psql
+#           (WAYBILL_DB_PORT changes it, e.g. for a second, test stack)
 # POSTGRES_PASSWORD must be set, e.g. in .env (see .env.example).
-# WAYBILL_PORT changes the port (the server and the published port must
-# match, because the server checks the Host header the browser sends).
+# The extension always connects to 4417. WAYBILL_PORT and WAYBILL_EXTENSION_IDS
+# exist only to run an isolated test stack (another project name and port)
+# next to it; the server checks the Host header, so both ports stay equal.
 services:
   server:
     build: { context: ., target: runtime }
@@ -24,7 +26,7 @@ services:
   db:
     image: postgres:17-alpine
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${WAYBILL_DB_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: waybill
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}

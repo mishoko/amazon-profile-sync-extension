@@ -2,6 +2,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), '..');
 const failures = [];
@@ -37,6 +38,14 @@ else {
   for (const file of ['server/server.mjs', 'compose.yaml']) {
     if (!readFileSync(join(root, file), 'utf8').includes(extensionId)) fail(`${file} does not allow the extension ID ${extensionId}`);
   }
+}
+
+// The extension, the server and compose.yaml must agree on the server port.
+const extensionPort = readFileSync(join(root, 'lib/server.js'), 'utf8').match(/SERVER_ORIGIN = 'http:\/\/127\.0\.0\.1:(\d+)'/)?.[1];
+const serverPort = readFileSync(join(root, 'server/server.mjs'), 'utf8').match(/DEFAULT_PORT = (\d+)/)?.[1];
+const composePorts = [...readFileSync(join(root, 'compose.yaml'), 'utf8').matchAll(/WAYBILL_PORT:-(\d+)/g)].map((match) => match[1]);
+if (!extensionPort || extensionPort !== serverPort || !composePorts.length || composePorts.some((port) => port !== extensionPort)) {
+  fail(`server port mismatch: extension ${extensionPort}, server ${serverPort}, compose ${composePorts.join('/')}`);
 }
 
 const worker = manifest.background?.service_worker;
@@ -86,8 +95,16 @@ for (const file of walk(root).filter((f) => /\.(css|js|mjs|html)$/.test(f) && !/
   }
 }
 
+// Every extension script must parse as a JavaScript module (catches syntax
+// errors before the browser does).
+const scripts = walk(root).filter((f) => /\.js$/.test(f) && !/\/(tools|server|\.git|node_modules)\//.test(f));
+for (const file of scripts) {
+  const { status, stderr } = spawnSync(process.execPath, ['--check', '--input-type=module'], { input: readFileSync(file) });
+  if (status !== 0) fail(`${file.slice(root.length + 1)} has a syntax error: ${String(stderr).split('\n').find((line) => /Error/.test(line))}`);
+}
+
 if (failures.length) {
   console.error(failures.map((f) => `✗ ${f}`).join('\n'));
   process.exit(1);
 }
-console.log(`✓ ${manifest.name} ${manifest.version} (ID ${extensionId}): manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, permissions [${manifest.permissions ?? []}], ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
+console.log(`✓ ${manifest.name} ${manifest.version} (ID ${extensionId}, server port ${extensionPort}): manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, ${scripts.length} scripts parse, permissions [${manifest.permissions ?? []}], ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
