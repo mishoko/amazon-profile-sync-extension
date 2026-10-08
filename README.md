@@ -1,6 +1,6 @@
 # Waybill Profile Aggregator
 
-> 📹 **Demo video:** [watch the walkthrough](VIDEO_LINK_PLACEHOLDER) *(link coming soon)*
+> 📹 **Demo video:** [watch the walkthrough](https://drive.proton.me/urls/A49VK2Q9YW#eUho7IIaFxuY) 
 
 Waybill is a browser extension and a small local server that bring
 together the Amazon accounts you are signed into across **several browser
