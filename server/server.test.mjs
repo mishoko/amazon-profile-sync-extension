@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { createWaybillServer } from './server.mjs';
 
-const EXTENSION_ID = 'iibmbonngmdgckjdjpilmapdgldhkeog';
+const EXTENSION_ID = 'dmhkjckieepnigmelmogkmomgmkgkkdn';
 const ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const PROFILE_A = '11111111-1111-4111-8111-111111111111';
 const PROFILE_B = '22222222-2222-4222-8222-222222222222';

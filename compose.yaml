@@ -10,7 +10,7 @@ services:
     build: { context: ., target: runtime }
     environment:
       WAYBILL_PORT: ${WAYBILL_PORT:-4417}
-      WAYBILL_EXTENSION_IDS: ${WAYBILL_EXTENSION_IDS:-iibmbonngmdgckjdjpilmapdgldhkeog}
+      WAYBILL_EXTENSION_IDS: ${WAYBILL_EXTENSION_IDS:-dmhkjckieepnigmelmogkmomgmkgkkdn}
       DATABASE_URL: postgres://waybill:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/waybill
     ports:
       - "127.0.0.1:${WAYBILL_PORT:-4417}:${WAYBILL_PORT:-4417}"

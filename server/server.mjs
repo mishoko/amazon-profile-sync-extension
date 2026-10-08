@@ -27,7 +27,7 @@ import { acceptWebSocket } from './websocket.mjs';
 import { createMemoryStore } from './store/memory.mjs';
 
 export const DEFAULT_PORT = 4417;
-const DEFAULT_EXTENSION_IDS = ['iibmbonngmdgckjdjpilmapdgldhkeog'];
+const DEFAULT_EXTENSION_IDS = ['dmhkjckieepnigmelmogkmomgmkgkkdn'];
 const ORDER_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_BODY_BYTES = 100_000;
 const INSTANCE_ID = /^[0-9a-f-]{36}$/;

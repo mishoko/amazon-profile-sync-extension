@@ -1,6 +1,7 @@
 // Static checks for the unpacked extension: node tools/check-extension.mjs
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), '..');
 const failures = [];
@@ -24,6 +25,18 @@ for (const permission of manifest.permissions ?? []) {
 const amazonOrigin = /^https:\/\/www\.amazon\.[a-z.]+\/\*$/;
 for (const origin of manifest.host_permissions ?? []) {
   if (!amazonOrigin.test(origin)) fail(`unexpected host permission ${origin}`);
+}
+
+// The manifest key pins the extension ID wherever the folder is loaded from.
+// The server and compose.yaml must allow exactly that ID.
+let extensionId = null;
+if (!manifest.key) fail('missing key: the extension ID would depend on the folder path');
+else {
+  const der = Buffer.from(manifest.key, 'base64');
+  extensionId = [...createHash('sha256').update(der).digest('hex').slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+  for (const file of ['server/server.mjs', 'compose.yaml']) {
+    if (!readFileSync(join(root, file), 'utf8').includes(extensionId)) fail(`${file} does not allow the extension ID ${extensionId}`);
+  }
 }
 
 const worker = manifest.background?.service_worker;
@@ -77,4 +90,4 @@ if (failures.length) {
   console.error(failures.map((f) => `✗ ${f}`).join('\n'));
   process.exit(1);
 }
-console.log(`✓ ${manifest.name} ${manifest.version}: manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, permissions [${manifest.permissions ?? []}], ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);
+console.log(`✓ ${manifest.name} ${manifest.version} (ID ${extensionId}): manifest valid, ${Object.keys(icons).length} icon entries, ${pages.length} pages, permissions [${manifest.permissions ?? []}], ${manifest.host_permissions?.length ?? 0} Amazon host permissions, no other remote URLs`);

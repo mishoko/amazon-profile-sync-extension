@@ -3,6 +3,7 @@
   "name": "Waybill",
   "version": "0.1.0",
   "description": "Track your marketplace purchases and order statuses.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzy1OJ2uTQIXAz3NfVHBdC1RDvciRe/6nx1AWXaDacz8j5ADY683IMABP+fDjg+A6EG8aIH/Hmeg6RSXwmCbRSu2rrak7Zrk6lEOLy2HLhsOU3IvWMbmmqG8mWWHu6uFa33s9tgRg9qIsXXGX4MYN3+vd7CS3lR1im68VnpHxputHdUW0wafcDOnSDevK1GkmE34EEq8iiPT0TVFltNjhoc6gBsKL47I4NUP7Z9GvrXMIPt9CCiOLIhVmlTFTwJMOgn0k4CXSWgchSL8RGGBXhUYykYOzEdujmSYsF7sfDy4nuZuD36DZmasV5QXxxHu6BZ9SnZNiUnq/ItSabrr/awIDAQAB",
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
