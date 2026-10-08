@@ -84,14 +84,21 @@ test('aggregates account summaries from several profiles', async () => {
   ]);
   assert.ok(list.every((account) => Number.isInteger(account.id)));
   const bob = list.find((account) => account.customerId === 'A2BBBBBBBBBBBB');
-  assert.deepEqual(bob.profiles, [{ instanceId: PROFILE_B, online: true, status: 'active' }]);
+  assert.deepEqual(bob.profiles, [{ instanceId: PROFILE_B, status: 'active' }]);
   assert.equal(bob.status, 'active');
   assert.equal('orders' in list[0], false);
 
+  // A disconnected profile no longer holds anything: Bob's account leaves the
+  // list, and comes back with the same ID when B reconnects and reports it.
   b.close();
   await settle();
-  const after = await accounts();
-  assert.equal(after.find((account) => account.id === bob.id).profiles[0].online, false);
+  assert.ok(!(await accounts()).some((account) => account.id === bob.id));
+  const again = connect(PROFILE_B);
+  await again.opened;
+  again.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', status: 'active' }] });
+  await settle();
+  assert.equal((await accounts()).find((account) => account.customerId === 'A2BBBBBBBBBBBB').id, bob.id);
+  again.close();
   a.close();
 });
 
@@ -138,6 +145,21 @@ test('reports unknown accounts and accounts no connected profile can serve', asy
   assert.equal((await ordersOf(id)).status, 409);
 });
 
+test('fails pending requests when the profile reconnects', async () => {
+  const a = connect(PROFILE_A);
+  await a.opened;
+  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.ae', customerId: 'A1GGGGGGGGGGGG', status: 'active' }] });
+  await settle();
+  const response = ordersOf(await idOf('.ae', 'A1GGGGGGGGGGGG'));
+  await a.next();
+  const reconnected = connect(PROFILE_A);
+  await reconnected.opened;
+  const answer = await response;
+  assert.equal(answer.status, 502);
+  assert.match((await answer.json()).error, /reconnected/);
+  reconnected.close();
+});
+
 test('fails pending requests when the profile disconnects', async () => {
   const a = connect(PROFILE_A);
   await a.opened;
@@ -180,7 +202,7 @@ test('pushes the account list to watchers whenever it changes', async () => {
   a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
   const added = await watcher.next();
   const italy = added.accounts.find((account) => account.domain === '.it');
-  assert.ok(italy?.profiles[0].online);
+  assert.equal(italy?.profiles[0].instanceId, PROFILE_A);
 
   a.send({ type: 'accounts', accounts: [] }); // signed out
   const removed = await watcher.next();
@@ -188,8 +210,8 @@ test('pushes the account list to watchers whenever it changes', async () => {
 
   a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
   await watcher.next();
-  a.close();
+  a.close(); // disconnected: its accounts leave the list
   const offline = await watcher.next();
-  assert.equal(offline.accounts.find((account) => account.id === italy.id).profiles[0].online, false);
+  assert.ok(!offline.accounts.some((account) => account.id === italy.id));
   watcher.close();
 });

@@ -6,7 +6,13 @@
 //   listAccounts()                              accounts with their holders
 //   getAccount(id)                              one account, or null
 //   deleteAccount(id)                           hide it (soft delete); false if unknown
+//   releaseProfile(profileId)                   the profile disconnected: drop its holdings
+//   releaseAllProfiles()                        nobody is connected (server start)
+//   pruneProfiles(unseenDays)                   delete profiles unseen that long; returns count
 //   close()
+//
+// Holdings (which profile holds which account) reflect connected profiles
+// only, so they can never go stale.
 //
 // A deleted account is hidden from listAccounts/getAccount until a profile
 // reports it with signedInAt (ms) later than the deletion.
@@ -45,6 +51,7 @@ export function createMemoryStore() {
       profiles.set(profileId, { lastSeenAt: new Date() });
     },
     async replaceProfileAccounts(profileId, summaries) {
+      profiles.set(profileId, { lastSeenAt: new Date() });
       holdings.set(profileId, new Map(summaries.map((summary) => [upsertAccount(summary).id, summary.status])));
     },
     async listAccounts() {
@@ -53,6 +60,24 @@ export function createMemoryStore() {
     async getAccount(id) {
       const account = accounts.find((candidate) => candidate.id === id && !candidate.deletedAt);
       return account ? withHolders(account) : null;
+    },
+    async releaseProfile(profileId) {
+      holdings.delete(profileId);
+      profiles.set(profileId, { lastSeenAt: new Date() });
+    },
+    async releaseAllProfiles() {
+      holdings.clear();
+    },
+    async pruneProfiles(unseenDays) {
+      const cutoff = Date.now() - unseenDays * 86_400_000;
+      let pruned = 0;
+      for (const [profileId, { lastSeenAt }] of profiles) {
+        if (lastSeenAt.getTime() < cutoff && !holdings.has(profileId)) {
+          profiles.delete(profileId);
+          pruned += 1;
+        }
+      }
+      return pruned;
     },
     async deleteAccount(id) {
       const account = accounts.find((candidate) => candidate.id === id && !candidate.deletedAt);

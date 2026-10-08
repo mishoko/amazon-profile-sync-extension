@@ -14,7 +14,9 @@
 //   are passed through and never stored.
 // - Profiles and accounts are kept in a store: Postgres when DATABASE_URL is
 //   set (compose.yaml), otherwise in memory. Each account gets a lasting
-//   numeric ID. Which profiles are connected is known only while they are.
+//   numeric ID. Which profile holds which account is recorded only while that
+//   profile is connected: released on disconnect and cleared at start, so it
+//   can't go stale. Profiles unseen for PROFILE_RETENTION_DAYS are deleted.
 // - Listens on 127.0.0.1 only and accepts only Waybill's extension origin(s).
 //
 // Run: docker compose up, or node server/server.mjs (in-memory store)
@@ -31,6 +33,8 @@ const MAX_BODY_BYTES = 100_000;
 const INSTANCE_ID = /^[0-9a-f-]{36}$/;
 const STATUSES = new Set(['active', 'needs-sign-in']);
 const STATUS_RANK = { active: 2, 'needs-sign-in': 1 };
+const PROFILE_RETENTION_DAYS = 30;
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const text = (value, max = 200) => (typeof value === 'string' && value.length <= max ? value : null);
 
@@ -55,23 +59,29 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
   const allowedOrigins = new Set(extensionIds.map((id) => `chrome-extension://${id}`));
   // instanceId -> the profile's open connection
   const connections = new Map();
+  // instanceId -> its pending store writes; one profile's writes run in order,
+  // across reconnects (a release can't overtake a new connection's report).
+  const profileWrites = new Map();
+  let pruneTimer = null;
   // requestId -> { instanceId, resolve, timer }
   const pendingOrders = new Map();
   // Activity pages watching the account list.
   const watchers = new Set();
   let allowedHosts = new Set();
 
-  // Stored accounts plus who holds them right now. The account's status is
-  // the best status among the profiles holding it.
+  // Stored accounts with the connected profiles holding them. The account's
+  // status is the best status among those profiles.
   const withConnections = (account) => {
-    const profiles = account.holders.map(({ profileId, status }) => ({ instanceId: profileId, online: connections.has(profileId), status }));
+    const profiles = account.holders.filter(({ profileId }) => connections.has(profileId))
+      .map(({ profileId, status }) => ({ instanceId: profileId, status }));
     const best = profiles.reduce((top, profile) => (STATUS_RANK[profile.status] > STATUS_RANK[top] ? profile.status : top), 'needs-sign-in');
     const { holders, ...fields } = account;
     return { ...fields, status: best, profiles };
   };
 
+  // Accounts held by at least one connected profile.
   async function aggregatedAccounts() {
-    return (await store.listAccounts()).map(withConnections);
+    return (await store.listAccounts()).map(withConnections).filter((account) => account.profiles.length);
   }
 
   async function broadcastAccounts() {
@@ -83,8 +93,7 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
   async function requestOrders(accountId, filter) {
     const account = await store.getAccount(accountId);
     if (!account) return { status: 404, body: { error: 'No such account.' } };
-    const holder = withConnections(account).profiles.filter((profile) => profile.online)
-      .sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status])[0];
+    const holder = withConnections(account).profiles.sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status])[0];
     if (!holder) return { status: 409, body: { error: 'No connected browser profile has this account signed in.' } };
     const requestId = randomUUID();
     return new Promise((resolve) => {
@@ -107,16 +116,32 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
 
   const logStoreError = (error) => console.error(`Waybill store: ${error.message}`);
 
+  function queueWrite(instanceId, write) {
+    const next = (profileWrites.get(instanceId) ?? Promise.resolve())
+      .then(write).then(broadcastAccounts).catch(logStoreError);
+    profileWrites.set(instanceId, next);
+    return next;
+  }
+
+  function failPendingOrders(instanceId, error) {
+    for (const [requestId, pending] of pendingOrders) {
+      if (pending.instanceId === instanceId) settleOrders(instanceId, { requestId, error });
+    }
+  }
+
   function handleConnection(instanceId, connection) {
-    connections.get(instanceId)?.close();
+    const replaced = connections.get(instanceId);
     connections.set(instanceId, connection);
-    // Store writes for one profile run in the order its messages arrived.
-    let writes = store.touchProfile(instanceId).then(broadcastAccounts).catch(logStoreError);
+    if (replaced) {
+      replaced.close(); // its onClose sees it is no longer current and releases nothing
+      failPendingOrders(instanceId, 'The browser profile reconnected; please try again.');
+    }
+    queueWrite(instanceId, () => store.touchProfile(instanceId));
     return {
       onMessage(message) {
         if (message?.type === 'accounts' && Array.isArray(message.accounts)) {
           const accounts = message.accounts.map(accountSummary).filter(Boolean);
-          writes = writes.then(() => store.replaceProfileAccounts(instanceId, accounts)).then(broadcastAccounts).catch(logStoreError);
+          queueWrite(instanceId, () => store.replaceProfileAccounts(instanceId, accounts));
         } else if (message?.type === 'orders-result') {
           settleOrders(instanceId, message);
         }
@@ -124,10 +149,8 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
       onClose() {
         if (connections.get(instanceId) !== connection) return;
         connections.delete(instanceId);
-        broadcastAccounts().catch(logStoreError);
-        for (const [requestId, pending] of pendingOrders) {
-          if (pending.instanceId === instanceId) settleOrders(instanceId, { requestId, error: 'The browser profile disconnected.' });
-        }
+        queueWrite(instanceId, () => store.releaseProfile(instanceId));
+        failPendingOrders(instanceId, 'The browser profile disconnected.');
       },
     };
   }
@@ -224,7 +247,12 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
   return {
     // `host` is 127.0.0.1 except inside a container, where Docker publishes
     // the port on the machine's loopback interface only (compose.yaml).
-    listen(port = DEFAULT_PORT, host = '127.0.0.1') {
+    async listen(port = DEFAULT_PORT, host = '127.0.0.1') {
+      // No profile is connected yet: holdings from a previous run are void.
+      await store.releaseAllProfiles();
+      await store.pruneProfiles(PROFILE_RETENTION_DAYS);
+      pruneTimer = setInterval(() => store.pruneProfiles(PROFILE_RETENTION_DAYS).catch(logStoreError), PRUNE_INTERVAL_MS);
+      pruneTimer.unref();
       return new Promise((resolve) => server.listen(port, host, () => {
         const { port: actual } = server.address();
         allowedHosts = new Set([`127.0.0.1:${actual}`, `localhost:${actual}`]);
@@ -232,9 +260,12 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
       }));
     },
     async close() {
+      clearInterval(pruneTimer);
       for (const connection of connections.values()) connection.close();
       for (const watcher of watchers) watcher.close();
       await new Promise((resolve) => server.close(resolve));
+      await Promise.all(profileWrites.values());
+      await store.releaseAllProfiles();
       await store.close();
     },
   };

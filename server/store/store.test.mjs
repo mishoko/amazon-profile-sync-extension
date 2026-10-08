@@ -81,6 +81,30 @@ for (const [name, create] of stores) {
       assert.deepEqual((await store.listAccounts()).map((restored) => restored.id), [account.id]);
     });
 
+    test('holdings last only while the profile is connected', async () => {
+      await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA' })]);
+      await store.replaceProfileAccounts(P2, [summary({ customerId: 'A1AAAAAAAAAAAA' }), summary({ domain: '.de', customerId: 'A1AAAAAAAAAAAA' })]);
+      await store.releaseProfile(P2);
+      const list = await store.listAccounts();
+      assert.deepEqual(list.map((account) => account.domain), ['.com']);
+      assert.deepEqual(list[0].holders.map((holder) => holder.profileId), [P1]);
+      await store.releaseAllProfiles();
+      assert.deepEqual(await store.listAccounts(), []);
+      // Accounts and their IDs survive; only the holdings went.
+      await store.replaceProfileAccounts(P2, [summary({ domain: '.de', customerId: 'A1AAAAAAAAAAAA' })]);
+      assert.equal((await store.listAccounts())[0].id, 2);
+    });
+
+    test('prunes profiles unseen for the retention period, never connected ones', async () => {
+      await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA' })]);
+      await store.touchProfile(P2);
+      await store.releaseProfile(P2);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(await store.pruneProfiles(0), 1); // P2: unseen and holding nothing
+      assert.equal(await store.pruneProfiles(30), 0);
+      assert.equal((await store.listAccounts())[0].holders[0].profileId, P1); // P1 kept: it holds accounts
+    });
+
     test('replacing a profile list drops accounts it no longer holds, and the ID survives', async () => {
       await store.replaceProfileAccounts(P1, [summary({ customerId: 'A1AAAAAAAAAAAA' })]);
       const [first] = await store.listAccounts();

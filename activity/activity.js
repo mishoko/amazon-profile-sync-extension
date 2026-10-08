@@ -22,7 +22,8 @@ const SERVER_RETRY_MS = 5000;
 // Where accounts and orders come from. subscribe(onAccounts, onLost) delivers
 // the account list now and after every change, and returns an unsubscribe
 // function. Accounts share one shape:
-// { key, id?, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, online }] }
+// { key, id?, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, status }] }
+// `profiles` are the connected browser profiles holding the account.
 // `id` is the server's lasting account ID; it exists only with the server.
 const allProfiles = {
   scope: 'all-profiles',
@@ -41,7 +42,7 @@ const thisProfile = (instanceId) => ({
   subscribe(onAccounts) {
     const load = async () => onAccounts((await loadAccounts())
       .filter((account) => account.marketplace === 'amazon')
-      .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, online: true }] }))
+      .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, status: account.status }] }))
       .sort((a, b) => a.domain.localeCompare(b.domain)));
     const onChanged = (changes, area) => {
       if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) load();
@@ -182,10 +183,8 @@ function h(tag, props = {}, ...children) {
 
 const STATUS_LABELS = { active: 'Active', 'needs-sign-in': 'Sign in again' };
 
-function profileLabel(account, instanceId) {
-  if (account.profiles.some((profile) => profile.instanceId === instanceId)) return 'This browser profile';
-  return account.profiles.some((profile) => profile.online) ? 'Another browser profile' : 'Another browser profile · not connected';
-}
+const profileLabel = (account, instanceId) =>
+  (account.profiles.some((profile) => profile.instanceId === instanceId) ? 'This browser profile' : 'Another browser profile');
 
 async function confirmRemoval(account) {
   store.dispatch({ type: 'removal-started', key: account.key });
