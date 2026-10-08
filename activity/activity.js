@@ -226,7 +226,7 @@ function renderAccounts({ scope, instanceId, accounts, selectedKey, removal }) {
       class: 'account', type: 'button', 'aria-current': String(account.key === selectedKey),
       on: { click: () => selectAccount(account.key) },
     },
-    h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 32, height: 32 }),
+    h('img', { src: '../icons/marketplaces/amazon.png', alt: '', width: 32, height: 32 }),
     h('span', {},
       h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
       h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' }),
@@ -307,7 +307,7 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
 
   detail.replaceChildren(...[
     h('div', { class: 'detail-head' },
-      h('img', { src: '../icons/marketplaces/amazon.svg', alt: '', width: 40, height: 40 }),
+      h('img', { src: '../icons/marketplaces/amazon.png', alt: '', width: 40, height: 40 }),
       h('div', {},
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
         h('p', { class: 'detail-sub', text: [account.email ?? account.name, account.id && `Account #${account.id}`].filter(Boolean).join(' · ') })),
