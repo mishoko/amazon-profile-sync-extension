@@ -41,7 +41,8 @@ services:
     restart: unless-stopped
 
   # Server and store tests against this project's database (it is wiped).
-  # Use a separate project: docker compose -p waybill-test --profile test run --rm tests
+  # Use a separate project and DB port, so the main stack is untouched:
+  #   WAYBILL_DB_PORT=5499 docker compose -p waybill-test --profile test run --rm tests
   tests:
     profiles: [test]
     build: { context: ., target: test }
