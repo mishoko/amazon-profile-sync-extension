@@ -5,7 +5,12 @@
     node tools/check-extension.mjs
 
 This checks:
-- the manifest is valid MV3 and declares no permissions, service worker or content scripts;
+- the manifest is valid MV3, with only the allowed permissions, Amazon-only
+  hosts, and content scripts limited to Amazon's orders, sign-in and error pages;
+- the network rule only removes the two framing headers, only for this
+  extension's sub-frames, only on Amazon;
+- the pinned extension ID and the server port agree across the extension,
+  server and compose.yaml, and every extension script parses;
 - every referenced icon exists at its declared size;
 - every local `href`/`src` resolves;
 - there are no inline scripts or handlers, and no remote URLs other than the
@@ -168,14 +173,7 @@ Account IDs and removal (server + Postgres in Docker):
 | B signs in to it again | Back, with the same ID 3 |
 
 Tests run on a copy of the extension pointed at port 4499, never at 4417,
-so they can't reach a server or browser profile in real use. In that copy
-the offscreen page's Amazon requests are answered by a stand-in, because
-Playwright can't intercept requests from offscreen documents.
-
-Not yet tested on real Amazon across two real profiles.
-
-To watch a live read, open `activity/activity.html?showOrdersWindow` (development
-builds, this-profile mode): the Amazon window stays open for DevTools.
+so they can't reach a server or browser profile in real use.
 
 ## Consistency fixes (2026-10-08)
 
@@ -189,7 +187,6 @@ outside network.
 | B switches Amazon off, then on | B's account leaves A's list, then returns |
 | B logs out of Waybill, then in | Same |
 | A logs out with Activity open | A's Activity shows the "Log in to Waybill" notice |
-| An orders window idle for 3 minutes, and one in use | The first is closed and its record removed; the second is kept |
 | Email on the sign-in page: field value, text outside the form, inside the form, only in a script, empty | Found in the first three; none for the last two |
 | Order headers in English, German, French and Arabic | Date and total read in all four |
 | Extension loaded from another folder | Same ID, `dmhkjckieepnigmelmogkmomgmkgkkdn` |
@@ -199,3 +196,24 @@ outside network.
 Live database clean-up on 2026-10-08: migration 003 cleared the 6 links (4 of them stale),
 and the 5 profile rows of the previous extension ID were deleted. The 3
 accounts (IDs 1-3, #3 removed) were kept.
+
+## Invisible order reads (2026-10-08)
+
+Orders used to be read in a window created as "minimized". In headed Chrome
+on macOS that window reports `state: "normal"` throughout: the minimized
+state is ignored at creation, so the window could appear on screen. Orders
+are now read in a frame of the offscreen document.
+
+Verified against a local HTTPS stand-in for Amazon (real TLS, real cookies)
+that sends `X-Frame-Options: SAMEORIGIN` and `frame-ancestors 'self'`,
+requires a `SameSite=Lax` session cookie, and fills its order cards from a
+page script:
+
+| Check | Result |
+| --- | --- |
+| Frame requests to Amazon | `Sec-Fetch-Dest: iframe`, session cookie sent, framing headers removed by the rule |
+| Orders .co.uk (2) and .com (1) | Read |
+| Windows / tabs, sampled every 50 ms during reads | Unchanged (1 / 3) |
+| Session cookie removed, then Refresh | "Amazon wants your password again" |
+| Two profiles, server + Postgres in Docker | Bob's 2022 order read in hidden frames as Bob, in profile B; every earlier check still passes |
+| Extension load (developer mode) | No warnings or errors |

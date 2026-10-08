@@ -112,7 +112,7 @@ All of the following are implemented and working:
   - account links exist only while a profile is connected, so they can't
     go stale;
   - profiles unseen for 30 days are removed automatically;
-  - an interrupted order read closes its own window.
+  - orders are read in a hidden page, so no window ever opens.
 - Built-in consistency checks: one command verifies that the extension ID,
   server port and Compose settings agree, and that every extension script
   parses.
@@ -143,9 +143,10 @@ All of the following are implemented and working:
 2. The Activity page, in any profile, receives the combined list and stays
    subscribed to changes.
 3. When you select an account, the server asks the profile that holds it to
-   read the orders. That profile opens Amazon's orders page in a minimized
-   window of its own, waits for Amazon to finish rendering it, reads the
-   orders, closes the window and sends the result back. Nothing about the
+   read the orders. That profile loads Amazon's orders page invisibly, in
+   a hidden frame of the extension's background page, waits for Amazon to
+   finish rendering it, reads the orders and sends the result back. No
+   window or tab opens. Nothing about the
    orders is stored.
 
 ## Requirements
@@ -248,12 +249,15 @@ is exactly that.
   and to publish), and there is nothing to compile or keep updated.
 - A **background service worker** keeps the profile connected to the server
   and follows Amazon sign-ins and sign-outs.
-- An **offscreen document** lets the background part parse Amazon pages:
-  service workers cannot use the browser's HTML parser.
-- A **minimized orders window** with a **read-only injected script** is
-  needed because Amazon sends order details encrypted inside the page, and
-  its own scripts decrypt them in the browser. The orders only exist once
-  the real page has run, so Waybill reads the finished page.
+- An **offscreen document**, Chrome's hidden extension page for background
+  work that needs a page, does two jobs:
+  - it parses Amazon pages for the background sign-in check (service
+    workers cannot use the browser's HTML parser);
+  - it reads orders. Amazon sends order details encrypted inside the
+    orders page, and its own scripts decrypt them in the browser, so the
+    orders only exist once the real page has run. Waybill loads that page
+    in a frame of the offscreen document, which is never displayed, and a
+    read-only script reads the finished page.
 
 ### Server: Node.js, HTTP and WebSockets
 
@@ -354,12 +358,18 @@ Schema files: [`server/migrations/`](server/migrations).
 | --- | --- |
 | Host access to the 11 `www.amazon.*` sites | Read your sign-in state and orders on those sites, and nothing else |
 | `storage` | Remember switches, the selected marketplace, and this profile's account summaries |
-| `scripting` | Read the finished orders page in Waybill's own orders window |
-| `offscreen` | Parse Amazon pages for the background sign-in check |
+| `offscreen` | The hidden background page that checks sign-in state and reads orders, invisibly |
+| `declarativeNetRequestWithHostAccess` | Lets that hidden page show Amazon's orders page in a frame. A single rule removes Amazon's "don't show me in a frame" headers, only for frames Waybill itself loads, only on the 11 Amazon sites. |
 | `alarms` | Retry the server connection once a minute when the server is down |
 
-There are no content scripts on pages you browse, and no access to other
-websites. The extension contains no remote code.
+Waybill's page script is declared for Amazon's orders, sign-in and error
+pages. It acts only inside Waybill's own hidden frame and does nothing on
+pages you browse. There is no access to other websites, and the extension
+contains no remote code.
+
+To watch a read happen live: on the extensions page, open Waybill's
+**Details**, click **Inspect views: background/offscreen.html**, and keep
+DevTools' **Network** tab open while you select an account in Activity.
 
 ## Privacy and security
 
@@ -382,7 +392,8 @@ websites. The extension contains no remote code.
 | `popup/` | The toolbar popup |
 | `activity/` | The Activity page |
 | `background/` | Service worker (server connection, sign-in tracking) and offscreen page |
-| `content/` | Script injected into Waybill's orders window to read orders |
+| `content/` | The order reader, which runs only inside Waybill's hidden orders frame |
+| `rules/` | The one network rule that lets the hidden frame load Amazon's orders page |
 | `lib/` | Shared extension modules: Amazon access, storage, state store, server client |
 | `icons/` | Extension and marketplace icons |
 | `pages/` | Placeholder pages for services that don't exist yet |
