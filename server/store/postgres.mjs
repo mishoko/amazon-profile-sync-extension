@@ -108,23 +108,16 @@ export async function createPostgresStore(connectionString) {
       );
       return rows[0] ? toAccount(rows[0]) : null;
     },
-    // A profile's holdings are current only while it is connected.
+    // Profiles and their holdings exist only while the profile is connected;
+    // deleting the profile removes its holdings too (ON DELETE CASCADE).
     async releaseProfile(profileId) {
-      await transaction(pool, async (client) => {
-        await client.query('DELETE FROM profile_accounts WHERE profile_id = $1', [profileId]);
-        await client.query('UPDATE profiles SET last_seen_at = now() WHERE id = $1', [profileId]);
-      });
+      await pool.query('DELETE FROM profiles WHERE id = $1', [profileId]);
     },
     async releaseAllProfiles() {
-      await pool.query('DELETE FROM profile_accounts');
+      await pool.query('DELETE FROM profiles');
     },
-    async pruneProfiles(unseenDays) {
-      const { rowCount } = await pool.query(
-        `DELETE FROM profiles p WHERE p.last_seen_at < now() - make_interval(days => $1)
-           AND NOT EXISTS (SELECT 1 FROM profile_accounts pa WHERE pa.profile_id = p.id)`,
-        [unseenDays],
-      );
-      return rowCount;
+    async listProfiles() {
+      return (await pool.query('SELECT id FROM profiles ORDER BY first_seen_at')).rows.map((row) => row.id);
     },
     async deleteAccount(id) {
       const { rowCount } = await pool.query('UPDATE accounts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL', [id]);

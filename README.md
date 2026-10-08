@@ -111,7 +111,8 @@ All of the following are implemented and working:
 - Self-maintaining data:
   - account links exist only while a profile is connected, so they can't
     go stale;
-  - profiles unseen for 30 days are removed automatically;
+  - the profiles table always lists exactly the connected browser
+    profiles;
   - orders are read in a hidden page, so no window ever opens.
 - Built-in consistency checks: one command verifies that the extension ID,
   server port and Compose settings agree, and that every extension script
@@ -331,7 +332,7 @@ profiles 1───* profile_accounts *───1 accounts
 
 | Table | One row per | Key columns |
 | --- | --- | --- |
-| `profiles` | Browser profile with Waybill installed (its random instance ID) | `id`, `first_seen_at`, `last_seen_at` |
+| `profiles` | Browser profile **connected** right now (its random instance ID) | `id`, `first_seen_at`, `last_seen_at` |
 | `accounts` | Amazon account **on one marketplace** | `id` (lasting), `marketplace`, `domain`, `customer_id`, `email`, `name`, `deleted_at` |
 | `profile_accounts` | Account held by a **connected** profile right now | `profile_id`, `account_id`, `status` (`active` / `needs-sign-in`), `reported_at` |
 
@@ -342,13 +343,10 @@ Why this shape:
   order history per marketplace, even for the same customer.
 - **Status lives on the link**, because it is per profile: an account can
   be signed in on one profile while another needs the password again.
-- **Links last only while the profile is connected.** They are removed when
-  a profile disconnects and cleared when the server starts, so the table
-  always describes the present. Accounts and their IDs are permanent.
-  Profile rows are kept for 30 days after they were last seen.
-- **Matching is by Amazon's customer ID**, falling back to email while the
-  ID is not yet known, so the same account is never stored twice.
-- **Orders are not stored.** They are read live, on request.
+- **Profiles and links last only while the profile is connected.** Both
+  are removed when a profile disconnects and cleared when the server
+  starts, so the tables always describe the present. Accounts and their
+  IDs are permanent.
 
 Schema files: [`server/migrations/`](server/migrations).
 

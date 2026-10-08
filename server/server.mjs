@@ -14,9 +14,9 @@
 //   are passed through and never stored.
 // - Profiles and accounts are kept in a store: Postgres when DATABASE_URL is
 //   set (compose.yaml), otherwise in memory. Each account gets a lasting
-//   numeric ID. Which profile holds which account is recorded only while that
-//   profile is connected: released on disconnect and cleared at start, so it
-//   can't go stale. Profiles unseen for PROFILE_RETENTION_DAYS are deleted.
+//   numeric ID. Profiles, and which profile holds which account, are recorded
+//   only while the profile is connected: deleted on disconnect and cleared at
+//   start, so they can't go stale.
 // - Listens on 127.0.0.1 only and accepts only Waybill's extension origin(s).
 //
 // Run: docker compose up, or node server/server.mjs (in-memory store)
@@ -33,8 +33,6 @@ const MAX_BODY_BYTES = 100_000;
 const INSTANCE_ID = /^[0-9a-f-]{36}$/;
 const STATUSES = new Set(['active', 'needs-sign-in']);
 const STATUS_RANK = { active: 2, 'needs-sign-in': 1 };
-const PROFILE_RETENTION_DAYS = 30;
-const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const text = (value, max = 200) => (typeof value === 'string' && value.length <= max ? value : null);
 
@@ -62,7 +60,6 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
   // instanceId -> its pending store writes; one profile's writes run in order,
   // across reconnects (a release can't overtake a new connection's report).
   const profileWrites = new Map();
-  let pruneTimer = null;
   // requestId -> { instanceId, resolve, timer }
   const pendingOrders = new Map();
   // Activity pages watching the account list.
@@ -248,11 +245,8 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
     // `host` is 127.0.0.1 except inside a container, where Docker publishes
     // the port on the machine's loopback interface only (compose.yaml).
     async listen(port = DEFAULT_PORT, host = '127.0.0.1') {
-      // No profile is connected yet: holdings from a previous run are void.
+      // No profile is connected yet: profiles and holdings of a previous run are void.
       await store.releaseAllProfiles();
-      await store.pruneProfiles(PROFILE_RETENTION_DAYS);
-      pruneTimer = setInterval(() => store.pruneProfiles(PROFILE_RETENTION_DAYS).catch(logStoreError), PRUNE_INTERVAL_MS);
-      pruneTimer.unref();
       return new Promise((resolve) => server.listen(port, host, () => {
         const { port: actual } = server.address();
         allowedHosts = new Set([`127.0.0.1:${actual}`, `localhost:${actual}`]);
@@ -260,7 +254,6 @@ export function createWaybillServer({ extensionIds = DEFAULT_EXTENSION_IDS, stor
       }));
     },
     async close() {
-      clearInterval(pruneTimer);
       for (const connection of connections.values()) connection.close();
       for (const watcher of watchers) watcher.close();
       await new Promise((resolve) => server.close(resolve));

@@ -6,13 +6,13 @@
 //   listAccounts()                              accounts with their holders
 //   getAccount(id)                              one account, or null
 //   deleteAccount(id)                           hide it (soft delete); false if unknown
-//   releaseProfile(profileId)                   the profile disconnected: drop its holdings
+//   releaseProfile(profileId)                   the profile disconnected: forget it and its holdings
 //   releaseAllProfiles()                        nobody is connected (server start)
-//   pruneProfiles(unseenDays)                   delete profiles unseen that long; returns count
+//   listProfiles()                              IDs of the connected profiles
 //   close()
 //
-// Holdings (which profile holds which account) reflect connected profiles
-// only, so they can never go stale.
+// Profiles and their holdings (which profile holds which account) exist only
+// while the profile is connected, so they can never go stale.
 //
 // A deleted account is hidden from listAccounts/getAccount until a profile
 // reports it with signedInAt (ms) later than the deletion.
@@ -63,21 +63,14 @@ export function createMemoryStore() {
     },
     async releaseProfile(profileId) {
       holdings.delete(profileId);
-      profiles.set(profileId, { lastSeenAt: new Date() });
+      profiles.delete(profileId);
     },
     async releaseAllProfiles() {
       holdings.clear();
+      profiles.clear();
     },
-    async pruneProfiles(unseenDays) {
-      const cutoff = Date.now() - unseenDays * 86_400_000;
-      let pruned = 0;
-      for (const [profileId, { lastSeenAt }] of profiles) {
-        if (lastSeenAt.getTime() < cutoff && !holdings.has(profileId)) {
-          profiles.delete(profileId);
-          pruned += 1;
-        }
-      }
-      return pruned;
+    async listProfiles() {
+      return [...profiles.keys()];
     },
     async deleteAccount(id) {
       const account = accounts.find((candidate) => candidate.id === id && !candidate.deletedAt);
