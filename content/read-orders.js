@@ -13,17 +13,25 @@ globalThis.waybillReadOrders = async function waybillReadOrders() {
   const deadline = Date.now() + DECRYPT_TIMEOUT_MS;
   while (!decrypted() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 250));
 
+  // Order header columns: a small label above each value. Labels are matched
+  // in the marketplace languages Waybill knows; otherwise Amazon's fixed
+  // column order (date placed, then total) is used, which every marketplace
+  // shares, including the Arabic ones.
+  const PLACED = /placed|order date|bestellung aufgegeben|bestelldatum|commande (?:effectuée|passée)|ordine effettuato|pedido realizado|fecha del pedido/i;
+  const TOTAL = /total|summe|gesamt|totale|importe/i;
+
   function headerFields(card) {
-    const fields = {};
+    const columns = [];
     for (const label of card.querySelectorAll('.a-text-caps, .a-size-mini')) {
       const column = label.closest('li, .a-column');
-      if (!column) continue;
-      const name = (clean(label.textContent) ?? '').toLowerCase();
-      const value = clean(column.textContent.replace(label.textContent, ''));
-      if (/placed|order date/.test(name)) fields.placed ??= value;
-      else if (/total/.test(name)) fields.total ??= value;
+      if (!column || columns.some((known) => known.column === column)) continue;
+      columns.push({ column, name: clean(label.textContent) ?? '', value: clean(column.textContent.replace(label.textContent, '')) });
     }
-    return fields;
+    const named = (pattern) => columns.find(({ name }) => pattern.test(name))?.value;
+    return {
+      placed: named(PLACED) ?? columns[0]?.value ?? null,
+      total: named(TOTAL) ?? columns[1]?.value ?? null,
+    };
   }
 
   function items(card) {
