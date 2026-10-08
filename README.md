@@ -35,7 +35,7 @@ account from every profile, with live order history.
 - [Privacy and security](#privacy-and-security)
 - [Project structure](#project-structure)
 - [Testing](#testing)
-- [Known limitations](#known-limitations)
+- [Scope of this release](#scope-of-this-release)
 - [Next steps](#next-steps)
 - [License](#license)
 
@@ -69,12 +69,17 @@ All of the following are implemented and working:
   .co.uk, .com.au, .de, .es, .fr, .ie, .it, .ae, .sa). The switches, the
   selected site and the expanded state are remembered.
 - Live connection check. For the selected site the popup shows **Active**
-  and the signed-in account, or **Log in** and **Inactive** when no account
-  is signed in or Amazon wants the password again.
+  and the signed-in account's email, or **Log in** and **Inactive** when no
+  account is signed in or Amazon wants the password again.
 - "Log in" opens Amazon's own sign-in for the chosen marketplace. Waybill
   never sees or stores a password.
 - Background sign-in tracking. Signing out of Amazon removes the account
   immediately, and finishing a sign-in adds it, without opening the popup.
+- Sharing follows your choices. A profile shares its accounts only while
+  you are signed in to Waybill and Amazon is switched on. Logging out or
+  switching Amazon off removes them from every list straight away.
+- Same ID everywhere. The extension ID is pinned in the manifest, so every
+  installation, from any folder, is recognised by the server.
 
 **Activity page**
 - Lists the Amazon accounts of **every browser profile** running Waybill,
@@ -83,7 +88,8 @@ All of the following are implemented and working:
   starts from Amazon's default period, or the most recent year that has
   orders, and offers a period selector for other years.
 - Each order shows the order date, total, order number (linked to Amazon),
-  delivery status, and items with title, link and picture.
+  delivery status, and items with title, link and picture, on every
+  supported marketplace, including the non-English ones.
 - Every load shows its source, for example *"Read live from Amazon in another
   browser profile at 21:32:51 in 2.8 s"*, with a **Refresh** button.
 - The list updates live, without reloading the page, when a profile signs in
@@ -102,6 +108,14 @@ All of the following are implemented and working:
   migrations applied automatically.
 - One-command start with Docker Compose. The server is reachable only from
   this machine and accepts only the Waybill extension.
+- Self-maintaining data:
+  - account links exist only while a profile is connected, so they can't
+    go stale;
+  - profiles unseen for 30 days are removed automatically;
+  - an interrupted order read closes its own window.
+- Built-in consistency checks: one command verifies that the extension ID,
+  server port and Compose settings agree, and that every extension script
+  parses.
 
 ## How it works
 
@@ -194,11 +208,9 @@ an unpacked extension:
 4. Click the puzzle-piece icon in the toolbar and pin **Waybill**.
 
 Repeat for every browser profile whose Amazon accounts you want to include.
-Loading the same folder gives the extension the same ID in every profile.
-That ID is the one the server accepts by default
-(`iibmbonngmdgckjdjpilmapdgldhkeog`). If yours differs (it depends on the
-folder's location), set `WAYBILL_EXTENSION_IDS` in `.env` and run
-`docker compose up -d` again.
+The extension always has the same ID, `dmhkjckieepnigmelmogkmomgmkgkkdn`,
+whichever folder it is loaded from (the manifest pins it), and that is the
+ID the server accepts.
 
 After pulling new code, click the reload icon on Waybill's card on the
 extensions page.
@@ -317,7 +329,7 @@ profiles 1───* profile_accounts *───1 accounts
 | --- | --- | --- |
 | `profiles` | Browser profile with Waybill installed (its random instance ID) | `id`, `first_seen_at`, `last_seen_at` |
 | `accounts` | Amazon account **on one marketplace** | `id` (lasting), `marketplace`, `domain`, `customer_id`, `email`, `name`, `deleted_at` |
-| `profile_accounts` | Account currently reported by a profile | `profile_id`, `account_id`, `status` (`active` / `needs-sign-in`), `reported_at` |
+| `profile_accounts` | Account held by a **connected** profile right now | `profile_id`, `account_id`, `status` (`active` / `needs-sign-in`), `reported_at` |
 
 Why this shape:
 - **Accounts are separate from profiles** because the same Amazon account
@@ -326,6 +338,10 @@ Why this shape:
   order history per marketplace, even for the same customer.
 - **Status lives on the link**, because it is per profile: an account can
   be signed in on one profile while another needs the password again.
+- **Links last only while the profile is connected.** They are removed when
+  a profile disconnects and cleared when the server starts, so the table
+  always describes the present. Accounts and their IDs are permanent.
+  Profile rows are kept for 30 days after they were last seen.
 - **Matching is by Amazon's customer ID**, falling back to email while the
   ID is not yet known, so the same account is never stored twice.
 - **Orders are not stored.** They are read live, on request.
@@ -381,8 +397,8 @@ websites. The extension contains no remote code.
 ```sh
 node tools/check-extension.mjs        # manifest, permissions, assets, no remote code
 node --test                           # server and storage tests (in-memory store)
-docker compose -p waybill-test --profile test run --rm tests   # the same against PostgreSQL
-docker compose -p waybill-test --profile test down -v          # clean up afterwards
+WAYBILL_DB_PORT=5499 docker compose -p waybill-test --profile test run --rm tests   # the same against PostgreSQL
+WAYBILL_DB_PORT=5499 docker compose -p waybill-test --profile test down -v          # clean up afterwards
 ```
 
 The browser flows (popup, Activity, two profiles, live updates, removal)
@@ -390,20 +406,16 @@ have been verified end to end against generated Amazon-like pages in
 separate test browsers. The record is in
 [`docs/verification.md`](docs/verification.md).
 
-## Known limitations
+## Scope of this release
 
-- **Email for signed-in accounts.** For accounts that are fully signed in,
-  Amazon doesn't show the email where Waybill currently looks for it. The
-  account's name is shown instead.
-- **Profiles that were reinstalled.** Removing and re-adding the extension
-  gives that browser profile a new ID. The previous ID stays in the database
-  with its old account links, until a clean-up rule is added.
-- **Depends on Amazon's pages.** Order details are read from Amazon's
-  orders page, so a redesign of that page needs an update here. Text labels
-  (such as "Order placed") are currently matched in English.
-- **AliExpress** is shown, but not yet connected.
-- **The Waybill sign-in is simulated** in developer installs until a
-  Waybill account service exists.
+- **Amazon** is fully supported on 11 marketplaces. The **AliExpress** card
+  is part of the interface; connecting it is the next marketplace.
+- **The Waybill account** is local in developer installs: "Log in" opens a
+  local session without an account service. A hosted Waybill account comes
+  with the companion web app.
+- **Amazon has no buyer order API**, so Waybill reads Amazon's own website,
+  as you would. When Amazon redesigns a page, the reader is updated
+  accordingly.
 
 ## Next steps
 

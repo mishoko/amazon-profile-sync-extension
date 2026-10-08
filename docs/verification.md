@@ -155,10 +155,8 @@ Live updates (same setup, A's Activity left open, no reload):
 | No server: an account saved or removed in this profile | List follows |
 | "Fetching live from Amazon…" while a period reloads | Shown; previous orders stay, dimmed; no stray "false" |
 
-Against server + Postgres in Docker, the two-profile checks pass as well,
-and right after a server restart the account list (IDs 1-3) comes back from
-the database, marked offline, before profiles reconnect. Bob's account keeps
-its ID across his sign-out and sign-in.
+Against server + Postgres in Docker, the two-profile checks pass as well.
+Bob's account keeps its ID across his sign-out and sign-in.
 
 Account IDs and removal (server + Postgres in Docker):
 
@@ -178,3 +176,26 @@ Not yet tested on real Amazon across two real profiles.
 
 To watch a live read, open `activity/activity.html?showOrdersWindow` (development
 builds, this-profile mode): the Amazon window stays open for DevTools.
+
+## Consistency fixes (2026-10-08)
+
+Same isolated setup: a copy of the extension, a Compose project
+`waybill-test` on ports 4499 and 5499, generated Amazon-like pages, and no
+outside network.
+
+| Check | Result |
+| --- | --- |
+| Server restart | No leftover holdings: the list refills as profiles reconnect |
+| B switches Amazon off, then on | B's account leaves A's list, then returns |
+| B logs out of Waybill, then in | Same |
+| A logs out with Activity open | A's Activity shows the "Log in to Waybill" notice |
+| An orders window idle for 3 minutes, and one in use | The first is closed and its record removed; the second is kept |
+| Email on the sign-in page: field value, text outside the form, inside the form, only in a script, empty | Found in the first three; none for the last two |
+| Order headers in English, German, French and Arabic | Date and total read in all four |
+| Extension loaded from another folder | Same ID, `dmhkjckieepnigmelmogkmomgmkgkkdn` |
+| Test database after the run | 2 profiles, 3 accounts, 0 links once the server stopped |
+| `node --test` / Postgres suite | 16 / 23 passing |
+
+Live database clean-up on 2026-10-08: migration 003 cleared the 6 links (4 of them stale),
+and the 5 profile rows of the previous extension ID were deleted. The 3
+accounts (IDs 1-3, #3 removed) were kept.
