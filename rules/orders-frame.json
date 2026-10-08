@@ -1,0 +1,40 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        {
+          "header": "x-frame-options",
+          "operation": "remove"
+        },
+        {
+          "header": "content-security-policy",
+          "operation": "remove"
+        }
+      ]
+    },
+    "condition": {
+      "initiatorDomains": [
+        "dmhkjckieepnigmelmogkmomgmkgkkdn"
+      ],
+      "resourceTypes": [
+        "sub_frame"
+      ],
+      "requestDomains": [
+        "www.amazon.com",
+        "www.amazon.ca",
+        "www.amazon.co.uk",
+        "www.amazon.com.au",
+        "www.amazon.de",
+        "www.amazon.es",
+        "www.amazon.fr",
+        "www.amazon.ie",
+        "www.amazon.it",
+        "www.amazon.ae",
+        "www.amazon.sa"
+      ]
+    }
+  }
+]

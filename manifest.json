@@ -10,9 +10,9 @@
   },
   "permissions": [
     "storage",
-    "scripting",
     "alarms",
-    "offscreen"
+    "offscreen",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://www.amazon.com/*",
@@ -27,6 +27,60 @@
     "https://www.amazon.ae/*",
     "https://www.amazon.sa/*"
   ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.amazon.com/your-orders/*",
+        "https://www.amazon.com/ap/*",
+        "https://www.amazon.com/errors/*",
+        "https://www.amazon.ca/your-orders/*",
+        "https://www.amazon.ca/ap/*",
+        "https://www.amazon.ca/errors/*",
+        "https://www.amazon.co.uk/your-orders/*",
+        "https://www.amazon.co.uk/ap/*",
+        "https://www.amazon.co.uk/errors/*",
+        "https://www.amazon.com.au/your-orders/*",
+        "https://www.amazon.com.au/ap/*",
+        "https://www.amazon.com.au/errors/*",
+        "https://www.amazon.de/your-orders/*",
+        "https://www.amazon.de/ap/*",
+        "https://www.amazon.de/errors/*",
+        "https://www.amazon.es/your-orders/*",
+        "https://www.amazon.es/ap/*",
+        "https://www.amazon.es/errors/*",
+        "https://www.amazon.fr/your-orders/*",
+        "https://www.amazon.fr/ap/*",
+        "https://www.amazon.fr/errors/*",
+        "https://www.amazon.ie/your-orders/*",
+        "https://www.amazon.ie/ap/*",
+        "https://www.amazon.ie/errors/*",
+        "https://www.amazon.it/your-orders/*",
+        "https://www.amazon.it/ap/*",
+        "https://www.amazon.it/errors/*",
+        "https://www.amazon.ae/your-orders/*",
+        "https://www.amazon.ae/ap/*",
+        "https://www.amazon.ae/errors/*",
+        "https://www.amazon.sa/your-orders/*",
+        "https://www.amazon.sa/ap/*",
+        "https://www.amazon.sa/errors/*"
+      ],
+      "js": [
+        "content/read-orders.js",
+        "content/orders-frame.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "orders-frame",
+        "enabled": true,
+        "path": "rules/orders-frame.json"
+      }
+    ]
+  },
   "action": {
     "default_title": "Waybill",
     "default_popup": "popup/popup.html",

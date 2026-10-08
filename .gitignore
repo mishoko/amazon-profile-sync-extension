@@ -33,3 +33,6 @@ node_modules/
 
 
 CLAUDE.md
+
+# Written by Chrome into an unpacked extension folder (compiled network rules)
+_metadata/

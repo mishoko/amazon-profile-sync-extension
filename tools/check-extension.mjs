@@ -11,14 +11,16 @@ const fail = (msg) => failures.push(msg);
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 if (manifest.manifest_version !== 3) fail('manifest_version must be 3');
 for (const key of ['name', 'version', 'action']) if (!manifest[key]) fail(`missing ${key}`);
-for (const key of ['optional_permissions', 'optional_host_permissions', 'content_scripts']) {
+for (const key of ['optional_permissions', 'optional_host_permissions']) {
   if (key in manifest) fail(`unexpected ${key}: not needed yet`);
 }
-// storage: marketplace settings and this profile's Amazon account summaries.
-// scripting: read decrypted order cards from Amazon's orders page.
+// storage: settings, session and this profile's Amazon account summaries.
 // alarms: retry the local-server connection every minute.
-// offscreen: parse Amazon pages (DOMParser) for the background account check.
-const allowedPermissions = ['storage', 'scripting', 'alarms', 'offscreen'];
+// offscreen: the hidden document that parses Amazon pages and reads orders
+//   in an invisible frame.
+// declarativeNetRequestWithHostAccess: lets that frame show Amazon's orders
+//   page (rules/orders-frame.json, checked below).
+const allowedPermissions = ['storage', 'alarms', 'offscreen', 'declarativeNetRequestWithHostAccess'];
 for (const permission of manifest.permissions ?? []) {
   if (!allowedPermissions.includes(permission)) fail(`unexpected permission ${permission}`);
 }
@@ -46,6 +48,30 @@ const serverPort = readFileSync(join(root, 'server/server.mjs'), 'utf8').match(/
 const composePorts = [...readFileSync(join(root, 'compose.yaml'), 'utf8').matchAll(/WAYBILL_PORT:-(\d+)/g)].map((match) => match[1]);
 if (!extensionPort || extensionPort !== serverPort || !composePorts.length || composePorts.some((port) => port !== extensionPort)) {
   fail(`server port mismatch: extension ${extensionPort}, server ${serverPort}, compose ${composePorts.join('/')}`);
+}
+
+// Content scripts: only Amazon's orders, sign-in and error pages; they act only
+// inside the extension's own invisible frame (content/orders-frame.js).
+const contentPage = /^https:\/\/www\.amazon\.[a-z.]+\/(your-orders|ap|errors)\/\*$/;
+for (const script of manifest.content_scripts ?? []) {
+  for (const match of script.matches) if (!contentPage.test(match)) fail(`content script matches ${match}`);
+  for (const file of script.js ?? []) if (!existsSync(join(root, file))) fail(`missing content script ${file}`);
+}
+
+// Network rules: only removing the two framing headers, only for frames this
+// extension itself loads, only on Amazon.
+for (const { path } of manifest.declarative_net_request?.rule_resources ?? []) {
+  if (!existsSync(join(root, path))) { fail(`missing rules ${path}`); continue; }
+  for (const rule of JSON.parse(readFileSync(join(root, path), 'utf8'))) {
+    const { action, condition } = rule;
+    const headers = action.responseHeaders ?? [];
+    const narrow = action.type === 'modifyHeaders' && !action.requestHeaders
+      && headers.length && headers.every(({ header, operation }) => operation === 'remove' && ['x-frame-options', 'content-security-policy'].includes(header))
+      && JSON.stringify(condition.resourceTypes) === '["sub_frame"]'
+      && JSON.stringify(condition.initiatorDomains) === JSON.stringify([extensionId])
+      && condition.requestDomains?.length && condition.requestDomains.every((domain) => /^www\.amazon\.[a-z.]+$/.test(domain));
+    if (!narrow) fail(`${path} rule ${rule.id} is broader than removing framing headers for this extension's Amazon frames`);
+  }
 }
 
 const worker = manifest.background?.service_worker;

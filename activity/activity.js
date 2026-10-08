@@ -9,13 +9,9 @@
 import { createStore } from '../lib/store.js';
 import { loadTrackedAccounts, affectsTrackedAccounts, loadSessionName, isSessionChange, markNeedsSignIn } from '../lib/storage.js';
 import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
-import { readOrders, readLatestOrders, closeOrdersWindows } from '../lib/amazon-orders.js';
+import { readOrders, readLatestOrders } from '../lib/amazon-orders.js';
 import { getInstanceId, watchAccounts, requestOrders, removeAccount } from '../lib/server.js';
 
-// Development builds only: activity.html?showOrdersWindow keeps the Amazon
-// window visible and open, to inspect its requests in DevTools.
-const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
-const orderReadOptions = { visible: isDevelopmentBuild && new URLSearchParams(location.search).has('showOrdersWindow') };
 
 const SERVER_RETRY_MS = 5000;
 
@@ -51,9 +47,7 @@ const thisProfile = (instanceId) => ({
     return () => chrome.storage.onChanged.removeListener(onChanged);
   },
   async orders(account, filter) {
-    const result = filter
-      ? await readOrders(account.domain, filter, orderReadOptions)
-      : await readLatestOrders(account.domain, orderReadOptions);
+    const result = filter ? await readOrders(account.domain, filter) : await readLatestOrders(account.domain);
     if (result.status === 'needs-sign-in') await markNeedsSignIn(account.marketplace, account.domain);
     return { ...result, servedBy: instanceId };
   },
@@ -313,8 +307,6 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
     status,
     body].filter(Boolean));
 }
-
-addEventListener('pagehide', closeOrdersWindows);
 
 let shownKey = null;
 store.subscribe((state) => {

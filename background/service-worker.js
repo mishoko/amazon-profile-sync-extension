@@ -9,7 +9,8 @@
 import { getInstanceId, connectUrl, isServerRunning } from '../lib/server.js';
 import { loadTrackedAccounts, affectsTrackedAccounts, isAmazonTracked, loadAccount, storeAccount, markNeedsSignIn } from '../lib/storage.js';
 import { AMAZON_DOMAINS } from '../lib/amazon.js';
-import { readOrders, readLatestOrders, isOrdersWindow, closeAbandonedOrdersWindows } from '../lib/amazon-orders.js';
+import { readOrders, readLatestOrders } from '../lib/amazon-orders.js';
+import { askOffscreen } from '../lib/offscreen.js';
 
 const KEEPALIVE_MS = 20_000; // WebSocket traffic keeps an MV3 service worker alive.
 const RECONNECT_ALARM = 'reconnect';
@@ -76,19 +77,8 @@ const pendingChecks = new Map(); // domain -> { timer, afterSignIn }
 
 const amazonDomainOf = (url) => AMAZON_DOMAINS.find((domain) => url.hostname === `www.amazon${domain}`);
 
-async function readAccountOffscreen(domain, known) {
-  const [existing] = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
-  if (!existing) {
-    await chrome.offscreen.createDocument({
-      url: 'background/offscreen.html',
-      reasons: ['DOM_PARSER'],
-      justification: 'Read which Amazon account is signed in from Amazon pages.',
-    }).catch(() => {}); // Already being created by a concurrent check.
-  }
-  const answer = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-account', domain, known });
-  if (answer?.error) throw new Error(answer.error);
-  return answer.account;
-}
+// The service worker has no DOMParser; the offscreen document reads the account.
+const readAccountOffscreen = (domain, known) => askOffscreen('read-account', { domain, known });
 
 // `afterSignIn`: the user just finished signing in on this marketplace.
 async function checkAccount(domain, { afterSignIn = false } = {}) {
@@ -107,7 +97,7 @@ async function checkAccount(domain, { afterSignIn = false } = {}) {
 async function followAmazonPage(tab, change) {
   const url = new URL(change.url ?? tab.url);
   const domain = amazonDomainOf(url);
-  if (!domain || await isOrdersWindow(tab.windowId)) return;
+  if (!domain) return;
   if (!(await isAmazonTracked())) return;
 
   if (change.url && url.pathname.includes('/sign-out')) {
@@ -140,13 +130,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && affectsTrackedAccounts(changes)) sendAccounts();
 });
 
-// Every minute: reconnect if needed, and close orders windows left behind by
-// a read that was cut off (e.g. the browser stopped this worker mid-read).
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name !== RECONNECT_ALARM) return;
-  connect();
-  closeAbandonedOrdersWindows();
-});
+// Every minute: reconnect if the server was unreachable.
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === RECONNECT_ALARM) connect(); });
 chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 });
 
 // Pages ask for a connection before reading the server's account list.
@@ -157,4 +142,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 connect();
-closeAbandonedOrdersWindows();
