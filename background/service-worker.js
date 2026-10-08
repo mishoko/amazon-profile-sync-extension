@@ -8,7 +8,7 @@
 import { getInstanceId, connectUrl, isServerRunning } from '../lib/server.js';
 import { loadAccounts, loadAccount, storeAccount, loadMarketplaces, markNeedsSignIn } from '../lib/storage.js';
 import { AMAZON_DOMAINS } from '../lib/amazon.js';
-import { readOrders, readLatestOrders, isOrdersWindow } from '../lib/amazon-orders.js';
+import { readOrders, readLatestOrders, isOrdersWindow, closeAbandonedOrdersWindows } from '../lib/amazon-orders.js';
 
 const KEEPALIVE_MS = 20_000; // WebSocket traffic keeps an MV3 service worker alive.
 const RECONNECT_ALARM = 'reconnect';
@@ -138,7 +138,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && Object.keys(changes).some((key) => key.startsWith('account:'))) sendAccounts();
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === RECONNECT_ALARM) connect(); });
+// Every minute: reconnect if needed, and close orders windows left behind by
+// a read that was cut off (e.g. the browser stopped this worker mid-read).
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RECONNECT_ALARM) return;
+  connect();
+  closeAbandonedOrdersWindows();
+});
 chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 });
 
 // Pages ask for a connection before reading the server's account list.
@@ -149,3 +155,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 connect();
+closeAbandonedOrdersWindows();
