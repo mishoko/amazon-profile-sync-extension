@@ -111,7 +111,7 @@ and button edges match to the pixel; the chevron is within 1px.
 3. Press Tab twice; focus should move to "Log in" and then "Sign up now". Enter on "Sign up now" opens the "not available yet" page in a new tab.
 4. Click "Log in": "Logging in…" for about 2.5s, then the signed-in view. Close and reopen the popup: still signed in until "Log out".
 5. Switch Amazon on, open its details, pick a marketplace and click "Log in": a new tab opens on that Amazon site (its sign-in page if you are not signed in recently).
-6. Open `chrome-extension://<id>/dev/preview.html`, or `chrome-extension://<id>/popup/popup.html?preview=signed-in`, to see the signed-in preview. `<id>` is on the extension card.
+6. Open `chrome-extension://<id>/popup/popup.html?preview=signed-in` to see the signed-in preview. `<id>` is on the extension card.
 
 ## Accounts across browser profiles (2026-10-07)
 

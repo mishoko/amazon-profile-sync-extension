@@ -1,8 +1,8 @@
-// Injected (read-only, in the extension's isolated world) into an Amazon orders
-// page that Waybill opened in its own window. Amazon sends each order's details
-// encrypted (".csd-encrypted-sensitive") and its own scripts decrypt them in
+// Declared (read-only, in the extension's isolated world) for Amazon's orders
+// page; called by content/orders-frame.js inside Waybill's invisible orders
+// frame. Amazon sends each order's details encrypted (".csd-encrypted-sensitive") and its own scripts decrypt them in
 // the browser, so this waits until every order card shows an order number,
-// then reads the cards. Defines a function; the caller invokes it.
+// then reads the cards. Defines a function; orders-frame.js invokes it.
 globalThis.waybillReadOrders = async function waybillReadOrders() {
   const ORDER_ID = /(?<![\d-])(?:\d{3}|D01)-\d{7}-\d{7}(?![\d-])/;
   const DECRYPT_TIMEOUT_MS = 20000;

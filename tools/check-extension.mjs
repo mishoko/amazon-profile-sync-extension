@@ -90,7 +90,7 @@ for (const [size, rel] of Object.entries(icons)) {
 }
 
 // Every local reference in extension pages must resolve; nothing may load from the network.
-const pages = [manifest.action.default_popup, ...['pages', 'dev', 'activity', 'background'].flatMap((dir) =>
+const pages = [manifest.action.default_popup, ...['pages', 'activity', 'background'].flatMap((dir) =>
   readdirSync(join(root, dir)).filter((f) => f.endsWith('.html')).map((f) => `${dir}/${f}`))];
 for (const rel of pages) {
   const file = join(root, rel);

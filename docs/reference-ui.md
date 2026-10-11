@@ -108,7 +108,7 @@ or the sign-in URL directly can't be told from the tab it ends on.
   - Sign up now / Go to account open the local `pages/web-app-pending.html`.
   - Amazon "Log in" opens Amazon itself (see above), in a new tab without a referrer. Nothing comes back to the extension, so Connection stays "Inactive".
   - Nothing is sent to any Waybill service, and no Waybill account is created.
-- **Sign-in is simulated, in development builds only.** "Log in" shows "Logging in…" with a spinner for 2.5s, then State B with the fixture `preview@example.com` from `dev/preview-sessions.js`. It persists in the popup's `localStorage` until "Log out". The note under the button reads "Development build: simulated sign-in, no account is used". Store builds keep the reference behaviour (open the web app in a new tab). `popup.html?preview=<name>` still forces a fixture. The loading state is ours: the reference's was never seen.
+- **Sign-in is simulated, in development builds only.** "Log in" shows "Logging in…" with a spinner for 2.5s, then State B with the fixture `preview@example.com` from `dev/preview-sessions.js`. It persists in `chrome.storage.local` (`waybillSession`) until "Log out". The note under the button reads "Development build: simulated sign-in, no account is used". Store builds keep the reference behaviour (open the web app in a new tab). `popup.html?preview=<name>` still forces a fixture. The loading state is ours: the reference's was never seen.
 - **Unobserved behaviour is not invented:**
   - Switches change local UI state only. Switching Amazon off also collapses its details (our choice; not observed).
   - The AliExpress chevron stays `aria-disabled` even when switched on, and "Activity" is `aria-disabled`.

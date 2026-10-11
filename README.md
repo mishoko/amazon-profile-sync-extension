@@ -395,7 +395,7 @@ DevTools' **Network** tab open while you select an account in Activity.
 | `lib/` | Shared extension modules: Amazon access, storage, state store, server client |
 | `icons/` | Extension and marketplace icons |
 | `pages/` | Placeholder pages for services that don't exist yet |
-| `dev/` | Development-only previews and diagnostics |
+| `dev/` | The simulated Waybill session used by development builds |
 | `server/` | Node.js server, WebSocket implementation, storage (memory and PostgreSQL), migrations, tests |
 | `Dockerfile`, `compose.yaml`, `.env.example` | Container setup |
 | `tools/` | Static checks for the extension |
