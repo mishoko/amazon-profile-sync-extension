@@ -189,3 +189,6 @@ select:focus-visible {
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; padding: 16px; }
 }
+
+/* An unexpected error, shown instead of failing silently (views/shared/errors.js). */
+.error { margin: 0 0 12px; padding: 10px 14px; border-radius: 8px; color: #b42318; background: #fef3f2; }

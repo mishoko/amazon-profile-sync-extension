@@ -18,200 +18,234 @@ before(async () => {
 });
 after(() => server.close());
 
-const api = (path, init = {}) => fetch(`http://${base}${path}`, { ...init, headers: { origin: ORIGIN, 'content-type': 'application/json', ...init.headers } });
+const health = (headers = { origin: ORIGIN }) => fetch(`http://${base}/health`, { headers });
 
-function connect(instanceId, { origin = ORIGIN, path = `/connect?instance=${instanceId}` } = {}) {
-  const socket = new WebSocket(`ws://${base}${path}`, { headers: { origin } });
-  const messages = [];
-  const waiters = [];
-  socket.addEventListener('message', ({ data }) => {
-    const message = JSON.parse(data);
-    const waiter = waiters.shift();
-    if (waiter) waiter(message); else messages.push(message);
+// A browser profile as the server sees it: it answers the server's events
+// like the background does (background/handlers.js), and can run the events
+// a profile may send. `reads(name, data)` answers site:read-orders.
+function profile(instanceId, { accounts = [], origin = ORIGIN, reads } = {}) {
+  const socket = new WebSocket(`ws://${base}/connect?instance=${instanceId}`, { headers: { origin } });
+  const pending = new Map();
+  const lists = [];
+  const listeners = new Set();
+  let shared = accounts;
+  let nextId = 1;
+  const send = (message) => socket.send(JSON.stringify(message));
+
+  const run = (name, data = {}) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    send({ kind: 'run', id, name, data });
   });
+
+  async function answer(name, data) {
+    if (name === 'storage:read-shared-accounts') return { [name]: { ...data, accounts: shared }, ...(await run('db:replace-profile-accounts', { accounts: shared })) };
+    if (name === 'storage:save-all-accounts') {
+      lists.push(data.accounts);
+      for (const listener of listeners) listener();
+      return { [name]: data };
+    }
+    if (name === 'site:read-orders' && reads) return reads(name, data);
+    throw new Error(`unexpected ${name}`);
+  }
+
+  socket.addEventListener('message', async ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.kind === 'answer') {
+      const waiting = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.ok) waiting.resolve(message.reached);
+      else waiting.reject(new Error(message.error));
+      return;
+    }
+    try {
+      send({ kind: 'answer', id: message.id, ok: true, reached: await answer(message.name, message.data) });
+    } catch (error) {
+      send({ kind: 'answer', id: message.id, ok: false, error: error.message });
+    }
+  });
+
   return {
-    socket,
     opened: new Promise((resolve, reject) => {
       socket.addEventListener('open', resolve);
       socket.addEventListener('error', reject);
     }),
-    send: (object) => socket.send(JSON.stringify(object)),
-    next: () => (messages.length ? Promise.resolve(messages.shift()) : new Promise((resolve) => waiters.push(resolve))),
+    run,
+    report(next) {
+      shared = next;
+      return run('db:replace-profile-accounts', { accounts: next });
+    },
+    // Resolves with the first account list (sent to every profile) that passes `check`.
+    until(check) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no matching account list')), 2000);
+        const look = () => {
+          const list = lists.at(-1);
+          if (!list || !check(list)) return;
+          clearTimeout(timer);
+          listeners.delete(look);
+          resolve(list);
+        };
+        listeners.add(look);
+        look();
+      });
+    },
     close: () => socket.close(),
   };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
-const accounts = async () => (await (await api('/accounts')).json()).accounts;
-const idOf = async (domain, customerId) => (await accounts()).find((account) => account.domain === domain && account.customerId === customerId).id;
-const ordersOf = (id, body = '{}') => api(`/accounts/${id}/orders`, { method: 'POST', body });
+const ann = { marketplace: 'amazon', domain: '.com', customerId: 'A1AAAAAAAAAAAA', name: 'Ann', email: 'ann@example.com', status: 'active' };
+const bob = { marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', name: 'Bob', email: 'bob@example.com', status: 'active' };
+const has = (customerId) => (list) => list.some((account) => account.customerId === customerId);
+const lacks = (customerId) => (list) => !has(customerId)(list);
+const idIn = (list, customerId) => list.find((account) => account.customerId === customerId).id;
 
 test('rejects requests from other origins and hosts', async () => {
-  assert.equal((await api('/accounts', { headers: { origin: 'https://evil.example' } })).status, 403);
-  assert.equal((await fetch(`http://${base}/accounts`)).status, 403);
+  assert.equal((await health({ origin: 'https://evil.example' })).status, 403);
+  assert.equal((await health({})).status, 403);
   // DNS rebinding: right origin, but the page reached the server under another host name.
   const [hostname, port] = base.split(':');
   const reboundStatus = await new Promise((resolve, reject) => {
-    request({ hostname, port, path: '/accounts', headers: { origin: ORIGIN, host: 'evil.example' } }, (response) => { response.resume(); resolve(response.statusCode); })
+    request({ hostname, port, path: '/health', headers: { origin: ORIGIN, host: 'evil.example' } }, (response) => { response.resume(); resolve(response.statusCode); })
       .on('error', reject).end();
   });
   assert.equal(reboundStatus, 403);
-  await assert.rejects(connect(PROFILE_A, { origin: 'https://evil.example' }).opened);
+  await assert.rejects(profile(PROFILE_A, { origin: 'https://evil.example' }).opened);
 });
 
 test('answers health checks from the extension', async () => {
-  assert.equal((await api('/health')).status, 204);
+  assert.equal((await health()).status, 204);
 });
 
-test('aggregates account summaries from several profiles', async () => {
-  const a = connect(PROFILE_A);
-  const b = connect(PROFILE_B);
+test('asks each profile for its accounts and sends every profile the full list', async () => {
+  const a = profile(PROFILE_A, { accounts: [{ ...ann, orders: ['ignored'] }, { ...ann, domain: '.co.uk' }] });
+  const b = profile(PROFILE_B, { accounts: [bob, { marketplace: 'amazon', domain: '.de', email: 'bob@example.com', status: 'needs-sign-in' }, { marketplace: 'amazon', domain: 'not a domain', customerId: 'A3', status: 'active' }] });
   await Promise.all([a.opened, b.opened]);
-  a.send({ type: 'accounts', accounts: [
-    { marketplace: 'amazon', domain: '.com', customerId: 'A1AAAAAAAAAAAA', name: 'Ann', email: 'ann@example.com', status: 'active', orders: ['ignored'] },
-    { marketplace: 'amazon', domain: '.co.uk', customerId: 'A1AAAAAAAAAAAA', name: 'Ann', email: 'ann@example.com', status: 'active' },
-  ] });
-  b.send({ type: 'accounts', accounts: [
-    { marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', name: 'Bob', email: 'bob@example.com', status: 'active' },
-    { marketplace: 'amazon', domain: '.de', email: 'bob@example.com', status: 'needs-sign-in' },
-    { marketplace: 'amazon', domain: 'not a domain', customerId: 'A3', status: 'active' },
-  ] });
-  await settle();
 
-  const list = await accounts();
+  const list = await a.until((items) => items.length === 4);
   assert.deepEqual(list.map(({ domain, customerId, email }) => `${domain} ${customerId ?? email}`), [
     '.com A1AAAAAAAAAAAA', '.co.uk A1AAAAAAAAAAAA', '.com A2BBBBBBBBBBBB', '.de bob@example.com',
   ]);
   assert.ok(list.every((account) => Number.isInteger(account.id)));
-  const bob = list.find((account) => account.customerId === 'A2BBBBBBBBBBBB');
-  assert.deepEqual(bob.profiles, [{ instanceId: PROFILE_B, status: 'active' }]);
-  assert.equal(bob.status, 'active');
+  const bobs = list.find((account) => account.customerId === bob.customerId);
+  assert.deepEqual(bobs.profiles, [{ instanceId: PROFILE_B, status: 'active' }]);
+  assert.equal(bobs.status, 'active');
   assert.equal('orders' in list[0], false);
+  await b.until((items) => items.length === 4);
 
   // A disconnected profile no longer holds anything: Bob's account leaves the
   // list, and comes back with the same ID when B reconnects and reports it.
   b.close();
-  await settle();
-  assert.ok(!(await accounts()).some((account) => account.id === bob.id));
-  const again = connect(PROFILE_B);
+  await a.until(lacks(bob.customerId));
+  const again = profile(PROFILE_B, { accounts: [bob] });
   await again.opened;
-  again.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', status: 'active' }] });
-  await settle();
-  assert.equal((await accounts()).find((account) => account.customerId === 'A2BBBBBBBBBBBB').id, bob.id);
+  assert.equal(idIn(await a.until(has(bob.customerId)), bob.customerId), bobs.id);
+
+  // Signing out reports an empty list.
+  await again.report([]);
+  await a.until(lacks(bob.customerId));
   again.close();
   a.close();
 });
 
-test('forwards an order request to the profile that holds the account', async () => {
-  const a = connect(PROFILE_A);
-  const b = connect(PROFILE_B);
+test('a profile reports only for itself', async () => {
+  const italian = [{ ...bob, domain: '.it' }];
+  const a = profile(PROFILE_A, { accounts: italian });
+  await a.opened;
+  await a.run('db:replace-profile-accounts', { accounts: italian, profile: PROFILE_B, to: PROFILE_B });
+  const italy = (await a.until((items) => items.some((account) => account.domain === '.it'))).find((account) => account.domain === '.it');
+  assert.deepEqual(italy.profiles, [{ instanceId: PROFILE_A, status: 'active' }]);
+  a.close();
+});
+
+test('finds the profile signed in to an account and passes its orders back', async () => {
+  const seen = [];
+  const a = profile(PROFILE_A, { accounts: [{ ...ann, domain: '.co.uk' }] });
+  const b = profile(PROFILE_B, {
+    accounts: [bob],
+    reads: (name, data) => {
+      seen.push(data);
+      if (data.filter === 'year-2020') throw new Error('Amazon showed 2 orders, but Waybill couldn\'t read them');
+      return { [name]: data, 'site:orders-read': { ...data, result: { orders: [{ id: '113-1111111-2222222' }] } } };
+    },
+  });
   await Promise.all([a.opened, b.opened]);
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.co.uk', customerId: 'A1AAAAAAAAAAAA', status: 'active' }] });
-  b.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.com', customerId: 'A2BBBBBBBBBBBB', status: 'active' }] });
-  await settle();
+  const bobId = idIn(await a.until(has(bob.customerId)), bob.customerId);
 
-  const bobId = await idOf('.com', 'A2BBBBBBBBBBBB');
-  const response = ordersOf(bobId, JSON.stringify({ filter: 'year-2023' }));
-  const request = await b.next();
-  assert.equal(request.type, 'read-orders');
-  assert.equal(request.domain, '.com');
-  assert.equal(request.filter, 'year-2023');
-  b.send({ type: 'orders-result', requestId: request.requestId, result: { status: 'active', orders: [{ id: '113-1111111-2222222' }] } });
+  const reached = await a.run('server:find-profile', { accountId: bobId, filter: 'year-2023' });
+  assert.deepEqual(seen[0], { site: { marketplace: 'amazon', domain: '.com' }, filter: 'year-2023', to: PROFILE_B, servedBy: PROFILE_B, accountId: bobId, profile: PROFILE_A });
+  assert.deepEqual(reached['site:orders-read'].result.orders, [{ id: '113-1111111-2222222' }]);
+  assert.equal(reached['site:orders-read'].servedBy, PROFILE_B);
 
-  const answer = await response;
-  assert.equal(answer.status, 200);
-  assert.deepEqual(await answer.json(), { instanceId: PROFILE_B, result: { status: 'active', orders: [{ id: '113-1111111-2222222' }] } });
-
-  // Another profile cannot answer a request that wasn't sent to it.
-  const second = ordersOf(bobId);
-  const secondRequest = await b.next();
-  a.send({ type: 'orders-result', requestId: secondRequest.requestId, result: { status: 'active', orders: [] } });
-  b.send({ type: 'orders-result', requestId: secondRequest.requestId, error: 'Amazon took too long to load' });
-  assert.equal((await second).status, 502);
-
+  // An error in the reading profile reaches the asker.
+  await assert.rejects(a.run('server:find-profile', { accountId: bobId, filter: 'year-2020' }), /couldn't read them/);
+  await assert.rejects(a.run('server:find-profile', { accountId: bobId, filter: 'Robert; DROP TABLE' }), /Invalid filter/);
   a.close();
   b.close();
 });
 
-test('reports unknown accounts and accounts no connected profile can serve', async () => {
-  assert.equal((await ordersOf(999999)).status, 404);
-  const a = connect(PROFILE_A);
-  await a.opened;
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.fr', customerId: 'A1FFFFFFFFFFFF', status: 'active' }] });
-  await settle();
-  const id = await idOf('.fr', 'A1FFFFFFFFFFFF');
+test('reports unknown accounts and accounts no connected profile holds', async () => {
+  const a = profile(PROFILE_A, { accounts: [{ ...ann, domain: '.fr', customerId: 'A1FFFFFFFFFFFF' }] });
+  const b = profile(PROFILE_B);
+  await Promise.all([a.opened, b.opened]);
+  assert.ok('db:account-not-found' in await b.run('server:find-profile', { accountId: 999999 }));
+  const id = idIn(await b.until(has('A1FFFFFFFFFFFF')), 'A1FFFFFFFFFFFF');
   a.close();
-  await settle();
-  assert.equal((await ordersOf(id)).status, 409);
+  await b.until(lacks('A1FFFFFFFFFFFF'));
+  assert.ok('server:account-offline' in await b.run('server:find-profile', { accountId: id }));
+  await assert.rejects(b.run('server:find-profile', { accountId: 'one' }), /Invalid account ID/);
+  b.close();
 });
 
-test('fails pending requests when the profile reconnects', async () => {
-  const a = connect(PROFILE_A);
-  await a.opened;
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.ae', customerId: 'A1GGGGGGGGGGGG', status: 'active' }] });
-  await settle();
-  const response = ordersOf(await idOf('.ae', 'A1GGGGGGGGGGGG'));
-  await a.next();
-  const reconnected = connect(PROFILE_A);
+test('fails a waiting orders request when the reading profile reconnects or disconnects', async () => {
+  let started;
+  const reading = new Promise((resolve) => { started = resolve; });
+  const a = profile(PROFILE_A);
+  const b = profile(PROFILE_B, { accounts: [{ ...bob, domain: '.ae' }], reads: () => { started(); return new Promise(() => {}); } });
+  await Promise.all([a.opened, b.opened]);
+  const id = idIn(await a.until((items) => items.some((account) => account.domain === '.ae')), bob.customerId);
+
+  const first = a.run('server:find-profile', { accountId: id });
+  await reading;
+  const reconnected = profile(PROFILE_B, { accounts: [{ ...bob, domain: '.ae' }], reads: () => new Promise(() => {}) });
   await reconnected.opened;
-  const answer = await response;
-  assert.equal(answer.status, 502);
-  assert.match((await answer.json()).error, /reconnected/);
+  await assert.rejects(first, /reconnected/);
+
+  await a.until((items) => items.some((account) => account.domain === '.ae'));
+  const second = a.run('server:find-profile', { accountId: id });
+  await new Promise((resolve) => setTimeout(resolve, 50));
   reconnected.close();
-});
-
-test('fails pending requests when the profile disconnects', async () => {
-  const a = connect(PROFILE_A);
-  await a.opened;
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.ca', customerId: 'A1CCCCCCCCCCCC', status: 'active' }] });
-  await settle();
-  const response = ordersOf(await idOf('.ca', 'A1CCCCCCCCCCCC'));
-  await a.next();
+  await assert.rejects(second, /disconnected/);
   a.close();
-  assert.equal((await response).status, 502);
 });
 
-test('removes an account: hidden from the list, orders refused, watchers told', async () => {
-  const a = connect(PROFILE_A);
-  await a.opened;
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.es', customerId: 'A1EEEEEEEEEEEE', status: 'active', signedInAt: Date.now() - 1000 }] });
-  await settle();
-  const id = await idOf('.es', 'A1EEEEEEEEEEEE');
-  const watcher = connect(null, { path: '/watch' });
-  await watcher.opened;
-  await watcher.next();
+test('removes an account: gone from every list, orders refused, removal answered once', async () => {
+  const a = profile(PROFILE_A, { accounts: [{ ...ann, domain: '.es', customerId: 'A1EEEEEEEEEEEE', signedInAt: Date.now() - 1000 }] });
+  const b = profile(PROFILE_B);
+  await Promise.all([a.opened, b.opened]);
+  const id = idIn(await b.until(has('A1EEEEEEEEEEEE')), 'A1EEEEEEEEEEEE');
 
-  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE' })).status, 204);
-  assert.ok(!(await watcher.next()).accounts.some((account) => account.id === id));
-  assert.ok(!(await accounts()).some((account) => account.id === id));
-  assert.equal((await ordersOf(id)).status, 404);
-  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE' })).status, 404);
-  assert.equal((await api(`/accounts/${id}`, { method: 'DELETE', headers: { origin: 'https://evil.example' } })).status, 403);
+  assert.ok('db:account-removed' in await b.run('db:remove-account', { accountId: id }));
+  await a.until(lacks('A1EEEEEEEEEEEE'));
+  await b.until(lacks('A1EEEEEEEEEEEE'));
+  assert.ok('db:account-not-found' in await b.run('server:find-profile', { accountId: id }));
+  assert.ok('db:account-not-found' in await b.run('db:remove-account', { accountId: id }));
+
+  // Reported again without a newer sign-in, it stays removed.
+  await a.report([{ ...ann, domain: '.es', customerId: 'A1EEEEEEEEEEEE', signedInAt: Date.now() - 1000 }]);
+  assert.ok('db:account-not-found' in await b.run('server:find-profile', { accountId: id }));
+  // Signed in to it again: back, with the same ID.
+  await a.report([{ ...ann, domain: '.es', customerId: 'A1EEEEEEEEEEEE', signedInAt: Date.now() }]);
+  assert.equal(idIn(await b.until(has('A1EEEEEEEEEEEE')), 'A1EEEEEEEEEEEE'), id);
   a.close();
-  watcher.close();
+  b.close();
 });
 
-test('pushes the account list to watchers whenever it changes', async () => {
-  const watcher = connect(null, { path: '/watch' });
-  await watcher.opened;
-  assert.equal((await watcher.next()).type, 'accounts');
-
-  const a = connect(PROFILE_A);
+test('refuses events a profile may not run on the server', async () => {
+  const a = profile(PROFILE_A);
   await a.opened;
-  await watcher.next(); // profile connected
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
-  const added = await watcher.next();
-  const italy = added.accounts.find((account) => account.domain === '.it');
-  assert.equal(italy?.profiles[0].instanceId, PROFILE_A);
-
-  a.send({ type: 'accounts', accounts: [] }); // signed out
-  const removed = await watcher.next();
-  assert.ok(!removed.accounts.some((account) => account.id === italy.id));
-
-  a.send({ type: 'accounts', accounts: [{ marketplace: 'amazon', domain: '.it', customerId: 'A1DDDDDDDDDDDD', status: 'active' }] });
-  await watcher.next();
-  a.close(); // disconnected: its accounts leave the list
-  const offline = await watcher.next();
-  assert.ok(!offline.accounts.some((account) => account.id === italy.id));
-  watcher.close();
+  for (const name of ['server:send-all-accounts', 'db:release-profile', 'server:profile-connected', 'storage:save-session', 'nonsense']) {
+    await assert.rejects(a.run(name, { profile: PROFILE_B }), /may not run/);
+  }
+  a.close();
 });

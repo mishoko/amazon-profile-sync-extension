@@ -1,0 +1,12 @@
+{
+  "name": "waybill",
+  "private": true,
+  "type": "module",
+  "description": "Waybill: browser extension (repo root) and local server (server/). No dependencies here; the server's are in server/package.json.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "node tools/check-extension.mjs",
+    "events": "node tools/event-map.mjs",
+    "test": "node --test"
+  }
+}

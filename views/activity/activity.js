@@ -1,61 +1,32 @@
-// Activity page: lists Amazon accounts and, only when one is selected, reads
-// that account's orders live from Amazon. Orders are kept in page memory only.
+// Activity page: lists marketplace accounts and, only when one is selected,
+// reads that account's orders live. Orders are kept in page memory only.
 //
-// With the local server running (server/server.mjs) the list holds the
-// accounts of every browser profile with Waybill, pushed by the server as they
-// change, and a selected account's orders are read by the profile that is
-// signed into it. Without the server it falls back to this profile's saved
-// accounts (updated as they change) and keeps checking for the server.
-import { createStore } from '../lib/store.js';
-import { loadTrackedAccounts, affectsTrackedAccounts, loadSessionName, isSessionChange, markNeedsSignIn } from '../lib/storage.js';
-import { ordersUrl, orderDetailsUrl } from '../lib/amazon.js';
-import { readOrders, readLatestOrders } from '../lib/amazon-orders.js';
-import { getInstanceId, watchAccounts, requestOrders, removeAccount } from '../lib/server.js';
+// Like every view, it only emits user: events and draws what storage holds.
+// While the local server is connected, the background keeps every browser
+// profile's accounts in storage and a selected account's orders are read by
+// the profile signed in to it; without the server, the list is this
+// profile's own accounts and this profile reads them.
+import { createStore } from '../shared/store.js';
+import { emit } from '../../core/bus.js';
+import * as state from '../../core/state.js';
+import { ordersUrl, orderDetailsUrl } from '../../integrations/amazon/urls.js';
+import { showError } from '../shared/errors.js';
 
-
-const SERVER_RETRY_MS = 5000;
-
-// Where accounts and orders come from. subscribe(onAccounts, onLost) delivers
-// the account list now and after every change, and returns an unsubscribe
-// function. Accounts share one shape:
+// Accounts share one shape:
 // { key, id?, marketplace, domain, customerId, name, email, status, profiles: [{ instanceId, status }] }
 // `profiles` are the connected browser profiles holding the account.
 // `id` is the server's lasting account ID; it exists only with the server.
-const allProfiles = {
-  scope: 'all-profiles',
-  subscribe: (onAccounts, onLost) => watchAccounts(
-    (accounts) => onAccounts(accounts.map((account) => ({ ...account, key: `id:${account.id}` }))),
-    onLost,
-  ),
-  async orders(account, filter) {
-    const { instanceId, result } = await requestOrders(account.id, filter);
-    return { ...result, servedBy: instanceId };
-  },
-};
-
-const thisProfile = (instanceId) => ({
-  scope: 'this-profile',
-  subscribe(onAccounts) {
-    const load = async () => onAccounts((await loadTrackedAccounts())
-      .map((account) => ({ ...account, key: `amazon${account.domain}`, profiles: [{ instanceId, status: account.status }] }))
-      .sort((a, b) => a.domain.localeCompare(b.domain)));
-    const onChanged = (changes, area) => {
-      if (area === 'local' && affectsTrackedAccounts(changes)) load();
-    };
-    chrome.storage.onChanged.addListener(onChanged);
-    load();
-    return () => chrome.storage.onChanged.removeListener(onChanged);
-  },
-  async orders(account, filter) {
-    const result = filter ? await readOrders(account.domain, filter) : await readLatestOrders(account.domain);
-    if (result.status === 'needs-sign-in') await markNeedsSignIn(account.marketplace, account.domain);
-    return { ...result, servedBy: instanceId };
-  },
-});
-
-// Asks the background worker to connect this profile to the local server:
-// { connected, instanceId }, or null if the worker didn't answer.
-const connectToServer = () => chrome.runtime.sendMessage({ type: 'connect' }).catch(() => null);
+async function loadAccounts() {
+  const instanceId = await state.instanceId();
+  if (await state.serverOnline()) {
+    const accounts = (await state.allAccounts()).map((account) => ({ ...account, key: `id:${account.id}` }));
+    return { scope: 'all-profiles', instanceId, accounts };
+  }
+  const accounts = (await state.trackedAccounts())
+    .map((account) => ({ ...account, key: `${account.marketplace}${account.domain}`, profiles: [{ instanceId, status: account.status }] }))
+    .sort((a, b) => a.domain.localeCompare(b.domain));
+  return { scope: 'this-profile', instanceId, accounts };
+}
 
 const initialState = {
   scope: null,
@@ -125,17 +96,30 @@ function reducer(state, action) {
 }
 
 const store = createStore(reducer, initialState);
-let source = null;
 let nextRequestId = 1;
 
+// What a user:requested-orders chain ended in, as this page shows it.
+function ordersOutcome(reached) {
+  const read = reached['site:orders-read'];
+  if (read) return { result: { status: 'active', ...read.result, servedBy: read.servedBy } };
+  if (reached['site:needs-sign-in']) return { result: { status: 'needs-sign-in' } };
+  if (reached['site:unreachable']) return { error: reached['site:unreachable'].reason };
+  if (reached['server:account-offline']) return { error: 'No connected browser profile has this account signed in.' };
+  if (reached['db:account-not-found']) return { error: 'Waybill no longer has this account.' };
+  if (reached['server:offline']) return { error: "The Waybill server can't be reached." };
+  throw new Error(`Orders request ended without an answer: ${Object.keys(reached).join(', ')}`);
+}
+
 async function loadOrders(key, filter = null) {
-  const account = store.getState().accounts.items.find((item) => item.key === key);
+  const { id, marketplace, domain } = store.getState().accounts.items.find((item) => item.key === key);
   const requestId = nextRequestId++;
   store.dispatch({ type: 'orders-requested', key, requestId, filter });
   try {
-    const result = await source.orders(account, filter);
-    store.dispatch({ type: 'orders-received', key, requestId, result });
+    const { result, error } = ordersOutcome(await emit('user:requested-orders', { account: { id, marketplace, domain }, filter }));
+    if (error) store.dispatch({ type: 'orders-failed', key, requestId, error });
+    else store.dispatch({ type: 'orders-received', key, requestId, result });
   } catch (error) {
+    console.error('[waybill]', error);
     store.dispatch({ type: 'orders-failed', key, requestId, error: error.message });
   }
 }
@@ -182,9 +166,12 @@ const profileLabel = (account, instanceId) =>
 async function confirmRemoval(account) {
   store.dispatch({ type: 'removal-started', key: account.key });
   try {
-    await removeAccount(account.id);
-    // The server then pushes the list without this account.
+    const reached = await emit('user:removed-account', { accountId: account.id });
+    // Removed: the server then sends every profile the list without it.
+    if (reached['db:account-removed']) return;
+    store.dispatch({ type: 'removal-failed', key: account.key, error: reached['server:offline'] ? "the Waybill server can't be reached" : 'Waybill no longer has this account' });
   } catch (error) {
+    console.error('[waybill]', error);
     store.dispatch({ type: 'removal-failed', key: account.key, error: error.message });
   }
 }
@@ -218,7 +205,7 @@ function renderAccounts({ scope, instanceId, accounts, selectedKey, removal }) {
       class: 'account', type: 'button', 'aria-current': String(account.key === selectedKey),
       on: { click: () => selectAccount(account.key) },
     },
-    h('img', { src: '../icons/marketplaces/amazon.png', alt: '', width: 32, height: 32 }),
+    h('img', { src: '../../icons/marketplaces/amazon.png', alt: '', width: 32, height: 32 }),
     h('span', {},
       h('span', { class: 'account-name', text: `Amazon ${account.domain}` }),
       h('span', { class: 'account-sub', text: account.email ?? account.name ?? '' }),
@@ -299,7 +286,7 @@ function renderDetail({ instanceId, accounts, selectedKey, orders }) {
 
   detail.replaceChildren(...[
     h('div', { class: 'detail-head' },
-      h('img', { src: '../icons/marketplaces/amazon.png', alt: '', width: 40, height: 40 }),
+      h('img', { src: '../../icons/marketplaces/amazon.png', alt: '', width: 40, height: 40 }),
       h('div', {},
         h('h2', { class: 'detail-title', text: `Amazon ${account.domain}` }),
         h('p', { class: 'detail-sub', text: [account.email ?? account.name, account.id && `Account #${account.id}`].filter(Boolean).join(' · ') })),
@@ -317,51 +304,31 @@ store.subscribe((state) => {
   shownKey = state.selectedKey;
 });
 
-let unsubscribe = () => {};
 let firstList = true;
 const requestedId = Number(new URLSearchParams(location.search).get('id')) || null;
 
-function use(next, instanceId) {
-  unsubscribe();
-  source = next;
-  unsubscribe = next.subscribe((accounts) => {
-    store.dispatch({ type: 'accounts-loaded', scope: next.scope, instanceId, accounts });
-    if (firstList) {
-      const requested = requestedId && accounts.find((account) => account.id === requestedId);
-      if (requested) selectAccount(requested.key);
-      else if (accounts.length === 1) selectAccount(accounts[0].key);
-    }
+async function showAccounts() {
+  const { scope, instanceId, accounts } = await loadAccounts();
+  store.dispatch({ type: 'accounts-loaded', scope, instanceId, accounts });
+  if (firstList) {
     firstList = false;
-  }, () => {
-    // The server stopped: show this profile's accounts until it is back.
-    use(thisProfile(instanceId), instanceId);
-    waitForServer(instanceId);
-  });
-}
-
-function waitForServer(instanceId) {
-  setTimeout(async () => {
-    if ((await connectToServer())?.connected) use(allProfiles, instanceId);
-    else waitForServer(instanceId);
-  }, SERVER_RETRY_MS);
+    const requested = requestedId && accounts.find((account) => account.id === requestedId);
+    if (requested) selectAccount(requested.key);
+    else if (accounts.length === 1) selectAccount(accounts[0].key);
+  }
 }
 
 // Signing in to or out of Waybill (in the popup) restarts this page, so it
-// always shows exactly what the current session may see.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && isSessionChange(changes)) location.reload();
+// always shows exactly what the current session may see. Any other change
+// (accounts, server status) redraws the list.
+state.onChange((keys) => {
+  if (state.isSessionChange(keys)) location.reload();
+  else showAccounts().catch(showError);
 });
 
-if (!(await loadSessionName())) {
+if (!(await state.sessionName())) {
   document.querySelector('[data-signed-out]').hidden = false;
   document.querySelector('.layout').hidden = true;
 } else {
-  const answer = await connectToServer();
-  const instanceId = answer?.instanceId ?? await getInstanceId();
-  if (answer?.connected) {
-    use(allProfiles, instanceId);
-  } else {
-    use(thisProfile(instanceId), instanceId);
-    waitForServer(instanceId);
-  }
+  await showAccounts();
 }

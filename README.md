@@ -101,9 +101,9 @@ All of the following are implemented and working:
   and reconnects automatically when the server returns.
 
 **Server and database**
-- A small Node.js server that joins all profiles: account registration, live
-  push to open Activity pages, and routing of order requests to the right
-  profile.
+- A small Node.js server that joins all profiles: account registration, the
+  combined list sent live to every profile, and routing of order requests
+  to the right profile.
 - PostgreSQL storage for profiles and accounts (never orders), with
   migrations applied automatically.
 - One-command start with Docker Compose. The server is reachable only from
@@ -114,9 +114,9 @@ All of the following are implemented and working:
   - the profiles table always lists exactly the connected browser
     profiles;
   - orders are read in a hidden page, so no window ever opens.
-- Built-in consistency checks: one command verifies that the extension ID,
-  server port and Compose settings agree, and that every extension script
-  parses.
+- Built-in consistency checks: one command verifies the event table and
+  its handlers, that the extension ID, server port and Compose settings
+  agree, and that every extension script parses.
 
 ## How it works
 
@@ -141,14 +141,20 @@ All of the following are implemented and working:
 1. Each profile's background worker connects to the server and reports the
    Amazon accounts signed in there: marketplace, Amazon customer ID, name,
    and status.
-2. The Activity page, in any profile, receives the combined list and stays
-   subscribed to changes.
+2. The server sends the combined list to every profile; the Activity page
+   shows it and follows every change.
 3. When you select an account, the server asks the profile that holds it to
    read the orders. That profile loads Amazon's orders page invisibly, in
    a hidden frame of the extension's background page, waits for Amazon to
    finish rendering it, reads the orders and sends the result back. No
    window or tab opens. Nothing about the
    orders is stored.
+
+Everything above is a chain of named events, listed in one file,
+[`core/events.js`](core/events.js), and run the same way in the extension
+and on the server. [`docs/architecture.md`](docs/architecture.md) explains
+the design in a few pages; `node tools/event-map.mjs <event>` prints what
+any event leads to.
 
 ## Requirements
 
@@ -248,17 +254,19 @@ is exactly that.
 - **Native JavaScript modules**, with no framework and no build step: the
   interface is small, the code loads directly as written (easy to review
   and to publish), and there is nothing to compile or keep updated.
-- A **background service worker** keeps the profile connected to the server
-  and follows Amazon sign-ins and sign-outs.
-- An **offscreen document**, Chrome's hidden extension page for background
-  work that needs a page, does two jobs:
-  - it parses Amazon pages for the background sign-in check (service
-    workers cannot use the browser's HTML parser);
-  - it reads orders. Amazon sends order details encrypted inside the
-    orders page, and its own scripts decrypt them in the browser, so the
-    orders only exist once the real page has run. Waybill loads that page
-    in a frame of the offscreen document, which is never displayed, and a
-    read-only script reads the finished page.
+- A **background service worker** is the hub every event passes through: it
+  keeps the profile connected to the server, follows Amazon sign-ins and
+  sign-outs, and is the only part that writes storage.
+- An **offscreen document** (the "hidden page"), Chrome's hidden extension
+  page for background work that needs a page, reads marketplace pages for
+  the background, in two ways:
+  - as served: it fetches and parses a page (service workers cannot use the
+    browser's HTML parser), for the sign-in check;
+  - as rendered: Amazon sends order details encrypted inside the orders
+    page, and its own scripts decrypt them in the browser, so the orders
+    only exist once the real page has run. Waybill loads that page in a
+    frame of the hidden page, which is never displayed, and a read-only
+    module reads the finished page.
 
 ### Server: Node.js, HTTP and WebSockets
 
@@ -269,7 +277,7 @@ something outside all of them that each one can reach. That is the
 server's job:
 
 - **Registry:** collects the account details each profile reports.
-- **Live updates:** pushes the combined list to every open Activity page.
+- **Live updates:** sends the combined list to every connected profile.
 - **Router:** sends an order request to the profile that holds that account,
   and returns the answer. Orders are passed through, not kept.
 
@@ -277,8 +285,9 @@ Without the server, each profile still works on its own: its popup and
 Activity page show only its own accounts.
 
 **Why WebSockets:** the server must *push* requests to a profile (for
-example "read the orders of account 3") and push list changes to open
-pages. A WebSocket is a lasting two-way channel. It is also the documented
+example "read the orders of account 3") and push list changes. One socket
+per profile carries events both ways; the only HTTP route is a health
+check. A WebSocket is a lasting two-way channel. It is also the documented
 way for a Manifest V3 background worker to stay alive while connected.
 
 **Why Node.js:** the server is a small, event-driven message router. Node
@@ -366,7 +375,7 @@ pages you browse. There is no access to other websites, and the extension
 contains no remote code.
 
 To watch a read happen live: on the extensions page, open Waybill's
-**Details**, click **Inspect views: background/offscreen.html**, and keep
+**Details**, click **Inspect views: background/hidden-page.html**, and keep
 DevTools' **Network** tab open while you select an account in Activity.
 
 ## Privacy and security
@@ -387,25 +396,24 @@ DevTools' **Network** tab open while you select an account in Activity.
 | Path | Contents |
 | --- | --- |
 | `manifest.json` | Extension manifest: name, permissions, entry points |
-| `popup/` | The toolbar popup |
-| `activity/` | The Activity page |
-| `background/` | Service worker (server connection, sign-in tracking) and offscreen page |
-| `content/` | The order reader, which runs only inside Waybill's hidden orders frame |
-| `rules/` | The one network rule that lets the hidden frame load Amazon's orders page |
-| `lib/` | Shared extension modules: Amazon access, storage, state store, server client |
+| `core/` | Shared by the extension and the server: the event table, the chain runner, configuration; plus `emit()` and storage for the extension |
+| `background/` | The background hub: handlers, page watcher, server connection, and the hidden page that reads marketplace pages |
+| `integrations/` | One folder per marketplace (Amazon): its sites, its sign-in check, its order reading, its page readers and frame rule |
+| `views/` | What people see: the popup, the Activity page, placeholder pages |
 | `icons/` | Extension and marketplace icons |
-| `pages/` | Placeholder pages for services that don't exist yet |
 | `dev/` | The simulated Waybill session used by development builds |
-| `server/` | Node.js server, WebSocket implementation, storage (memory and PostgreSQL), migrations, tests |
+| `server/` | Node.js server: its handlers, WebSocket implementation, storage (memory and PostgreSQL), migrations, tests |
+| `tests/` | Tests of the event table and chain runner |
 | `Dockerfile`, `compose.yaml`, `.env.example` | Container setup |
-| `tools/` | Static checks for the extension |
-| `docs/` | Reference notes and verification records |
+| `tools/` | Static checks for the extension, and the event map |
+| `docs/` | Architecture, reference notes and verification records |
 
 ## Testing
 
 ```sh
-node tools/check-extension.mjs        # manifest, permissions, assets, no remote code
-node --test                           # server and storage tests (in-memory store)
+node tools/check-extension.mjs        # events and handlers, manifest, permissions, assets, no remote code
+node --test                           # event chains, server and storage tests (in-memory store)
+node tools/event-map.mjs <event>      # what leads to an event, and everything it causes
 WAYBILL_DB_PORT=5499 docker compose -p waybill-test --profile test run --rm tests   # the same against PostgreSQL
 WAYBILL_DB_PORT=5499 docker compose -p waybill-test --profile test down -v          # clean up afterwards
 ```

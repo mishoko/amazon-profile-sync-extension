@@ -362,3 +362,6 @@ select:focus-visible {
   text-decoration: none;
   cursor: pointer;
 }
+
+/* An unexpected error, shown instead of failing silently (views/shared/errors.js). */
+.error { margin: 0; padding: 8px 16px; font-size: 12px; color: #b42318; background: #fef3f2; }

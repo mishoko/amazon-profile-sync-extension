@@ -1,5 +1,9 @@
+// The toolbar popup. Like every view, it only emits user: events and draws
+// what storage holds; the background does the work.
+import { emit } from '../../core/bus.js';
+import * as state from '../../core/state.js';
+import { showError } from '../shared/errors.js';
 import { mountMarketplaces } from './marketplaces.js';
-import { loadSessionName, saveSessionName } from '../lib/storage.js';
 
 // There is no account service yet, so a real session never exists and store
 // builds always show the signed-out view. Unpacked development builds simulate
@@ -9,31 +13,31 @@ const isDevelopmentBuild = !('update_url' in chrome.runtime.getManifest());
 const previewName = new URLSearchParams(location.search).get('preview');
 const SIMULATED_SIGN_IN_MS = 2500;
 
-// The session lives in chrome.storage (lib/storage.js), so the background
-// worker and the Activity page follow sign-in and sign-out too.
 async function loadSession(requested = null) {
-  const name = requested ?? previewName ?? await loadSessionName();
+  const name = requested ?? previewName ?? await state.sessionName();
   if (!isDevelopmentBuild || !name) return null;
-  const { previewSessions } = await import('../dev/preview-sessions.js');
+  const { previewSessions } = await import('../../dev/preview-sessions.js');
   return previewSessions[name] ?? null;
 }
 
 async function simulateSignIn(button) {
+  const label = button.querySelector('[data-log-in-label]');
   button.setAttribute('aria-busy', 'true');
   button.setAttribute('aria-disabled', 'true');
-  button.querySelector('[data-log-in-label]').textContent = 'Logging in…';
-  await new Promise((resolve) => setTimeout(resolve, SIMULATED_SIGN_IN_MS));
-  await saveSessionName('signed-in');
-  renderSignedIn(await loadSession('signed-in'));
-  button.removeAttribute('aria-busy');
-  button.removeAttribute('aria-disabled');
-  button.querySelector('[data-log-in-label]').textContent = 'Log in';
+  label.textContent = 'Logging in…';
+  try {
+    await new Promise((resolve) => setTimeout(resolve, SIMULATED_SIGN_IN_MS));
+    await emit('user:signed-in', { name: 'signed-in' });
+    renderSignedIn(await loadSession('signed-in'));
+  } finally {
+    button.removeAttribute('aria-busy');
+    button.removeAttribute('aria-disabled');
+    label.textContent = 'Log in';
+  }
 }
 
 function showView(name) {
-  for (const view of document.querySelectorAll('[data-view]')) {
-    view.hidden = view.dataset.view !== name;
-  }
+  for (const view of document.querySelectorAll('[data-view]')) view.hidden = view.dataset.view !== name;
 }
 
 let marketplacesMounted = false;
@@ -45,7 +49,7 @@ function renderSignedIn(session) {
   showView('signed-in');
   if (!marketplacesMounted) {
     marketplacesMounted = true;
-    mountMarketplaces(document.querySelector('[data-view="signed-in"]'));
+    mountMarketplaces(document.querySelector('[data-view="signed-in"]')).catch(showError);
   }
 }
 
@@ -58,13 +62,12 @@ document.addEventListener('click', (event) => {
   const logIn = event.target.closest('[data-log-in]');
   if (logIn && isDevelopmentBuild) {
     event.preventDefault();
-    if (!logIn.hasAttribute('aria-busy')) simulateSignIn(logIn);
+    if (!logIn.hasAttribute('aria-busy')) simulateSignIn(logIn).catch(showError);
     return;
   }
-
   if (event.target.closest('[data-log-out]')) {
-    saveSessionName(null);
     renderSignedOut();
+    emit('user:signed-out').catch(showError);
   }
 });
 
