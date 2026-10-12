@@ -217,3 +217,49 @@ page script:
 | Session cookie removed, then Refresh | "Amazon wants your password again" |
 | Two profiles, server + Postgres in Docker | Bob's 2022 order read in hidden frames as Bob, in profile B; every earlier check still passes |
 | Extension load (developer mode) | No warnings or errors |
+
+## Event architecture (2026-10-12)
+
+The extension and server were reorganised around one event table
+(`core/events.js`, see `docs/architecture.md`). Behaviour was meant to stay
+the same, except two fixes found on the way: the AliExpress switch no longer
+triggers an Amazon check, and a sign-in is still noticed when Chrome stops
+the background while the user is on Amazon's sign-in pages.
+
+Static and unit:
+
+| Check | Result |
+| --- | --- |
+| `node tools/check-extension.mjs` | Passes; also fails on a wrong image path in a view script (tried) |
+| `node --test` (event chains, server, memory store) | 22 / 22 |
+| Postgres suite in Docker (`waybill-test`, port 5499) | 29 / 29 |
+
+Browser, executed in Chrome for Testing 1243 (headless), two separate
+profiles each loading a copy of the extension pointed at port 4499, a local
+HTTPS stand-in for www.amazon.com and www.amazon.co.uk (real TLS, SameSite=Lax
+session cookies, framing forbidden, order cards filled by page script), and
+no outside network. Run twice: server in memory, and server + Postgres in
+Docker (project `waybill-test`, 4499/5499). Both runs: 34 / 34.
+
+| Check | Result |
+| --- | --- |
+| Popup signed out; simulated log in (~2.7 s); session saved by the background | Pass |
+| Amazon on: checked in the hidden page with the profile's sign-in; Active + email; account saved | Pass |
+| Chevron and marketplace .co.uk: saved, checked, Active | Pass |
+| AliExpress switch: saved, no Amazon request | Pass (0 requests) |
+| Activity A: all profiles; Ann .com and .co.uk "This browser profile", Bob .com "Another browser profile" | Pass |
+| Bob's orders from A: read in B, in a hidden frame; "in another browser profile"; address `type=amazon&id=3`; no window or tab opened | Pass |
+| Period year-2024 | Pass |
+| Ann .co.uk orders read in this profile | Pass |
+| Stale session: "Amazon wants your password again"; list shows "Sign in again" | Pass |
+| B signs out on Amazon: Bob leaves A's list | Pass |
+| B on the sign-in page, background stopped (DevTools protocol), sign-in finished: noticed (`signedInAt` set), Bob back | Pass |
+| Remove Bob's account: gone; reported again without sign-in: stays removed; signed in again: back with the same ID | Pass |
+| Background stopped, then a popup click: woken, setting saved | Pass |
+| Server stopped: Activity falls back to this profile with the notice; orders read in this profile | Pass |
+| Server back: Activity returns to all profiles by itself | Pass (57–59 s: the reconnect alarm) |
+| A logs out of Waybill: A's Activity shows the notice; Ann's accounts leave B's list | Pass |
+| Errors in any page or background (console) | None |
+
+Not covered: real Amazon pages (the stand-in imitates them), Brave, and the
+toolbar-bubble rendering of the popup (loaded as a page at its size).
