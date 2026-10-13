@@ -7,6 +7,9 @@
   "scripts": {
     "check": "node tools/check-extension.mjs",
     "events": "node tools/event-map.mjs",
+    "trace": "node tools/trace.mjs",
+    "trace:step": "node tools/trace.mjs --step",
+    "trace:debug": "node --inspect-brk tools/trace.mjs",
     "test": "node --test"
   }
 }
