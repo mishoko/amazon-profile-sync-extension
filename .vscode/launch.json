@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Trace: user:opened-popup",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/trace.mjs",
+      "args": ["user:opened-popup"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Trace: any event (asks which)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/trace.mjs",
+      "args": ["${input:event}", "--step"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "inputs": [
+    { "id": "event", "type": "promptString", "description": "Event name, e.g. user:signed-out", "default": "user:signed-out" }
+  ]
+}
